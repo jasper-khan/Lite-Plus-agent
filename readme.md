@@ -2,7 +2,7 @@
 
 Lite 的跨平台节点监控 Agent。本仓库版本在基础监控之外，支持安全远程终端、文件管理、远程命令、Cloudflare Access、在线配置下发与配置结果回执。
 
-当前稳定版本：`2.3.6.2`
+当前稳定版本：`2.3.6.3`
 
 使用 MCP 代理功能，Lite需升级至 2.3.3 或更高版本。
 
@@ -59,7 +59,7 @@ docker pull ghcr.io/nuomiiiii/Lite-agent:latest
 也可以拉取固定版本：
 
 ```bash
-docker pull ghcr.io/nuomiiiii/Lite-agent:2.3.6.2
+docker pull ghcr.io/nuomiiiii/Lite-agent:2.3.6.3
 ```
 
 容器的启动参数、宿主机目录挂载和节点 Token 请以 Lite 后台生成的部署命令为准。Docker 部署不会在容器内替换 Agent 二进制；升级时需拉取新镜像并重建容器。
@@ -248,5 +248,6 @@ Client ID 与 Client Secret 必须成对配置，可以选择命令行参数、�
 | `2.3.6.0` | 远程文件上传和下载更快；管理后台一起更新后走二进制并并行上传，只升级 Agent 时原方式仍可用 |
 | `2.3.6.1` | btrfs 容器（如 LXC/LXD）设置了磁盘配额时，面板上的磁盘总量和已用量改为容器自己的配额，不再显示整个存储池。没有设置配额、不是 btrfs，或配额读不到时，磁盘显示与以前相同。感谢 IShinji 的 [PR #2](https://github.com/nuomiiiii/Lite-agent/pull/2)。 |
 | `2.3.6.2` | ICMP、TCP、HTTP 探测延迟保留毫秒小数。Lite 2.3.7 同版本第二次更新开始用 value_ms 保存到 0.01 ms；旧 Lite 使用兼容整数 value，探测结果仍可正常接收。极小延迟按保存精度可能显示为 0.00 ms。失败时仍记为失败。 |
+| `2.3.6.3` | LXC/LXD 容器的运行时间改为容器自己的开机时长，不再显示宿主机的开机时长。读不到容器自己的时长时，仍按原来的方式显示。感谢 IShinji 的 [PR #3](https://github.com/nuomiiiii/Lite-agent/pull/3)。 |
 
 完整发布记录和升级说明请查看 [GitHub Releases](https://github.com/nuomiiiii/Lite-agent/releases)。
