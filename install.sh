@@ -667,7 +667,7 @@ build_download_url() {
     local repo="$1"
     local name="$2"
     if [ -n "$github_proxy" ]; then
-        echo "${github_proxy}/https://github.com/${repo}/releases/${download_path}/${name}"
+        echo "${github_proxy%/}/https://github.com/${repo}/releases/${download_path}/${name}"
     else
         echo "https://github.com/${repo}/releases/${download_path}/${name}"
     fi
@@ -694,7 +694,7 @@ for candidate in \
         log_step "Downloading $name directly..."
     fi
     log_info "URL: ${CYAN}$download_url${NC}"
-    if curl --fail --show-error -L -o "$download_path_tmp" "$download_url"; then
+    if curl --fail --show-error -L -A "Lite-agent-install (+https://github.com/nuomiiiii/Lite-agent)" -o "$download_path_tmp" "$download_url"; then
         download_ok=true
         break
     fi

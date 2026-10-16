@@ -410,36 +410,28 @@ else {
 }
 $AgentArgs = @(Preserve-ExistingConfigArg -Incoming $AgentArgs -ExistingArgs $existingArgs)
 
-function Get-LatestTag {
-    param([string]$Repo)
-    $ApiUrl = "https://api.github.com/repos/$Repo/releases/latest"
-    $release = Invoke-RestMethod -Uri $ApiUrl -UseBasicParsing
-    return $release.tag_name
-}
-
 function Get-DownloadUrl {
     param([string]$Repo, [string]$Tag, [string]$Name)
-    if ($GitHubProxy) {
-        return "$GitHubProxy/https://github.com/$Repo/releases/download/$Tag/$Name"
+    $ReleasePath = if ([string]::IsNullOrWhiteSpace($Tag) -or $Tag -eq "latest") {
+        "latest/download/$Name"
     }
-    return "https://github.com/$Repo/releases/download/$Tag/$Name"
+    else {
+        "download/$Tag/$Name"
+    }
+    $Url = "https://github.com/$Repo/releases/$ReleasePath"
+    if ($GitHubProxy) {
+        return "$($GitHubProxy.TrimEnd('/'))/$Url"
+    }
+    return $Url
 }
 
-$versionToInstall = ""
+$versionToInstall = "latest"
 if ($InstallVersion -ne "") {
     Log-Info "Attempting to install specified version: $InstallVersion"
     $versionToInstall = $InstallVersion
 }
 else {
-    try {
-        Log-Step "Fetching latest release version from GitHub API..."
-        $versionToInstall = Get-LatestTag $GitHubRepo
-        Log-Success "Latest version fetched: $versionToInstall"
-    }
-    catch {
-        Log-Error "Failed to fetch latest version: $_"
-        exit 1
-    }
+    Log-Info "No version specified, installing the latest version."
 }
 Log-Success "Installing Lite-agent version: $versionToInstall"
 
@@ -458,7 +450,7 @@ foreach ($candidate in @(
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     Log-Info "URL: $DownloadUrl"
     try {
-        Invoke-WebRequest -Uri $DownloadUrl -OutFile $AgentPath -UseBasicParsing
+        Invoke-WebRequest -Uri $DownloadUrl -OutFile $AgentPath -UseBasicParsing -UserAgent "Lite-agent-install (+https://github.com/nuomiiiii/Lite-agent)"
         $downloaded = $true
         break
     }
