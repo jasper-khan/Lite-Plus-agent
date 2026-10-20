@@ -249,6 +249,6 @@ Client ID 与 Client Secret 必须成对配置，可以选择命令行参数、�
 | `2.3.6.1` | btrfs 容器（如 LXC/LXD）设置了磁盘配额时，面板上的磁盘总量和已用量改为容器自己的配额，不再显示整个存储池。没有设置配额、不是 btrfs，或配额读不到时，磁盘显示与以前相同。感谢 IShinji 的 [PR #2](https://github.com/nuomiiiii/Lite-agent/pull/2)。 |
 | `2.3.6.2` | ICMP、TCP、HTTP 探测延迟保留毫秒小数。Lite 2.3.7 同版本第二次更新开始用 value_ms 保存到 0.01 ms；旧 Lite 使用兼容整数 value，探测结果仍可正常接收。极小延迟按保存精度可能显示为 0.00 ms。失败时仍记为失败。 |
 | `2.3.6.3` | LXC/LXD 容器的运行时间改为容器自己的开机时长，不再显示宿主机的开机时长。读不到容器自己的时长时，仍按原来的方式显示。感谢 IShinji 的 [PR #3](https://github.com/nuomiiiii/Lite-agent/pull/3)。 |
-| `2.3.6.4` | HTTP 探测改为带上常见浏览器请求头。原先部分站点会拒绝默认请求并返回 403，延迟被记成失败。未返回成功状态时，探测结果仍记为失败。来自 kernalxxx 的 [Issue #4](https://github.com/nuomiiiii/Lite-agent/issues/4)。 |
+| `2.3.6.4` | HTTP 探测改为带上常见浏览器请求头。原先部分站点会拒绝默认请求并返回 403，延迟被记成失败。未返回成功状态时，探测结果仍记为失败。 |
 
 完整发布记录和升级说明请查看 [GitHub Releases](https://github.com/nuomiiiii/Lite-agent/releases)。
