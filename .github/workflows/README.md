@@ -45,8 +45,11 @@ without repeatedly updating once installed. The agent uses
 Embedding `update.Repo` keeps fork builds on the fork's releases even
 if the source default changes during an upstream merge.
 
-Prefer `go-version-file: go.mod` for release-producing workflows so Actions uses
-the Go version declared by the project.
+Build, snapshot, stable release, and Docker publishing all install Go `1.26.10`
+explicitly. Do not use `go-version-file: go.mod`, do not set `check-latest: true`,
+and do not let Actions pick a newer or older toolchain. After setup, confirm
+`go env GOVERSION` is `go1.26.10` and set `GOTOOLCHAIN=local`. Keep `go.mod`
+on `go 1.26.10` with `toolchain go1.26.10`.
 
 ## `build.yml`
 

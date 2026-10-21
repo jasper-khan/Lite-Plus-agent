@@ -2,7 +2,7 @@
 
 Lite 的跨平台节点监控 Agent。本仓库版本在基础监控之外，支持安全远程终端、文件管理、远程命令、Cloudflare Access、在线配置下发与配置结果回执。
 
-当前稳定版本：`2.3.6.4`
+当前稳定版本：`2.3.10.0`
 
 使用 MCP 代理功能，Lite需升级至 2.3.3 或更高版本。
 
@@ -53,13 +53,13 @@ Docker 请用原来的 `-e` `-t` 重建 Lite-agent 容器，不要在容器里�
 ### Docker
 
 ```bash
-docker pull ghcr.io/nuomiiiii/Lite-agent:latest
+docker pull ghcr.io/nuomiiiii/lite-agent:latest
 ```
 
 也可以拉取固定版本：
 
 ```bash
-docker pull ghcr.io/nuomiiiii/Lite-agent:2.3.6.4
+docker pull ghcr.io/nuomiiiii/lite-agent:2.3.10.0
 ```
 
 容器的启动参数、宿主机目录挂载和节点 Token 请以 Lite 后台生成的部署命令为准。Docker 部署不会在容器内替换 Agent 二进制；升级时需拉取新镜像并重建容器。
@@ -250,5 +250,6 @@ Client ID 与 Client Secret 必须成对配置，可以选择命令行参数、�
 | `2.3.6.2` | ICMP、TCP、HTTP 探测延迟保留毫秒小数。Lite 2.3.7 同版本第二次更新开始用 value_ms 保存到 0.01 ms；旧 Lite 使用兼容整数 value，探测结果仍可正常接收。极小延迟按保存精度可能显示为 0.00 ms。失败时仍记为失败。 |
 | `2.3.6.3` | LXC/LXD 容器的运行时间改为容器自己的开机时长，不再显示宿主机的开机时长。读不到容器自己的时长时，仍按原来的方式显示。感谢 IShinji 的 [PR #3](https://github.com/nuomiiiii/Lite-agent/pull/3)。 |
 | `2.3.6.4` | HTTP 探测改为带上常见浏览器请求头。原先部分站点会拒绝默认请求并返回 403，延迟被记成失败。未返回成功状态时，探测结果仍记为失败。 |
+| `2.3.10.0` | 使用 Go 1.26.10 构建。后续正式版、快照和 Docker 镜像都按这个版本编译，不再使用更旧的 Go。 |
 
 完整发布记录和升级说明请查看 [GitHub Releases](https://github.com/nuomiiiii/Lite-agent/releases)。

@@ -1,6 +1,6 @@
 module github.com/nuomiiiii/lite-agent
 
-go 1.24.0
+go 1.26.10
 
 require (
 	github.com/UserExistsError/conpty v0.1.4
