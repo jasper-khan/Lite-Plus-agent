@@ -479,6 +479,8 @@ func xraySniffing(in InboundSpec) map[string]any {
 		Sniffing     bool   `json:"sniffing"`
 		DestOverride string `json:"dest_override"`
 		RouteOnly    bool   `json:"route_only"`
+		Security     string `json:"security"`
+		Flow         string `json:"flow"`
 	}
 	if strings.TrimSpace(in.SettingsJSON) == "" {
 		return nil
@@ -491,7 +493,15 @@ func xraySniffing(in InboundSpec) map[string]any {
 	if len(dest) == 0 {
 		dest = []string{"http", "tls", "quic"}
 	}
-	return map[string]any{"enabled": true, "destOverride": dest, "routeOnly": s.RouteOnly}
+	routeOnly := s.RouteOnly
+	flow := inboundFlow(in)
+	if flow == "" {
+		flow = s.Flow
+	}
+	if strings.EqualFold(strings.TrimSpace(s.Security), "reality") || strings.Contains(strings.ToLower(flow), "vision") {
+		routeOnly = true
+	}
+	return map[string]any{"enabled": true, "destOverride": dest, "routeOnly": routeOnly}
 }
 
 func inboundFlow(in InboundSpec) string {

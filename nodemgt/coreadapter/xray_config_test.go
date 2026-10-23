@@ -50,6 +50,28 @@ func TestXrayConfigAppliesSniffingStreamAndRoutes(t *testing.T) {
 	}
 }
 
+func TestXrayRealitySniffingForcesRouteOnly(t *testing.T) {
+	c := newXrayCore()
+	c.users = []UserSpec{{ID: "u1", UUID: vlessAlice, Password: "pw"}}
+	c.inbounds = []InboundSpec{{
+		ID:         "reality",
+		Listen:     "127.0.0.1",
+		Port:       443,
+		Protocol:   "vless",
+		Flow:       "xtls-rprx-vision",
+		StreamJSON: `{"network":"tcp","security":"reality"}`,
+		SettingsJSON: `{"sniffing":true,"security":"reality","flow":"xtls-rprx-vision","dest_override":"http,tls,quic"}`,
+	}}
+	raw, err := c.configJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, `"routeOnly":true`) {
+		t.Fatalf("reality sniffing must be route-only: %s", text)
+	}
+}
+
 func TestSingBoxRealityUsesStringServerName(t *testing.T) {
 	c := newSingBoxCore()
 	c.users = []UserSpec{{ID: "u1", UUID: vlessAlice, Password: "audit-pass"}}
