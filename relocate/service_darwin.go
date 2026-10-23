@@ -24,10 +24,19 @@ func launchdPlistExists(label string) bool {
 		fileExists(filepath.Join(os.Getenv("HOME"), "Library/LaunchAgents", label+".plist"))
 }
 
+func darwinPlistPrefixes() []string {
+	return []string{plusPlistPrefix, litePlistPrefix, komariPlistPrefix}
+}
+
 func (darwinController) LegacyServiceExists(name string) bool {
-	label := legacyPlistPrefix + name
-	return fileExists("/Library/LaunchDaemons/"+label+".plist") ||
-		fileExists(filepath.Join(os.Getenv("HOME"), "Library/LaunchAgents", label+".plist"))
+	for _, prefix := range darwinPlistPrefixes() {
+		label := prefix + name
+		if fileExists("/Library/LaunchDaemons/"+label+".plist") ||
+			fileExists(filepath.Join(os.Getenv("HOME"), "Library/LaunchAgents", label+".plist")) {
+			return true
+		}
+	}
+	return false
 }
 
 func (darwinController) Collect(string) (spec, error) { return spec{}, nil }
@@ -35,7 +44,7 @@ func (darwinController) Collect(string) (spec, error) { return spec{}, nil }
 func (c darwinController) Install(next spec) error {
 	label := next.PlistLabel
 	if label == "" {
-		label = newPlistPrefix + next.Name
+		label = plusPlistPrefix + next.Name
 	}
 	plistPath, system := plistPathFor(next.WorkDir, label)
 	if err := os.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
@@ -49,7 +58,7 @@ func (c darwinController) Install(next spec) error {
 }
 
 func (darwinController) Start(name string) error {
-	label := newPlistPrefix + name
+	label := plusPlistPrefix + name
 	systemPlist := "/Library/LaunchDaemons/" + label + ".plist"
 	userPlist := filepath.Join(os.Getenv("HOME"), "Library/LaunchAgents", label+".plist")
 	if fileExists(systemPlist) {
@@ -62,13 +71,13 @@ func (darwinController) Start(name string) error {
 }
 
 func (darwinController) Running(name string) bool {
-	label := newPlistPrefix + name
+	label := plusPlistPrefix + name
 	return exec.Command("launchctl", "print", "system/"+label).Run() == nil ||
 		exec.Command("launchctl", "print", "gui/"+strconv.Itoa(os.Getuid())+"/"+label).Run() == nil
 }
 
 func (darwinController) PreventRestart(name string) error {
-	for _, prefix := range []string{legacyPlistPrefix, newPlistPrefix} {
+	for _, prefix := range darwinPlistPrefixes() {
 		label := prefix + name
 		for _, path := range []string{
 			"/Library/LaunchDaemons/" + label + ".plist",
@@ -92,7 +101,7 @@ func (darwinController) DisableNoStop(name string) error {
 }
 
 func (darwinController) StopDisableRemove(name string) error {
-	for _, prefix := range []string{legacyPlistPrefix, newPlistPrefix} {
+	for _, prefix := range darwinPlistPrefixes() {
 		label := prefix + name
 		systemPlist := "/Library/LaunchDaemons/" + label + ".plist"
 		userPlist := filepath.Join(os.Getenv("HOME"), "Library/LaunchAgents", label+".plist")
