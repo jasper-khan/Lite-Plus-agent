@@ -1,7 +1,10 @@
 package server
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -79,5 +82,45 @@ func TestHTTPPing(t *testing.T) {
 				t.Errorf("HTTP ping %s error: %v", tt.target, err)
 			}
 		})
+	}
+}
+
+func TestHTTPPingSendsBrowserHeaders(t *testing.T) {
+	var gotUA, gotAccept string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUA = r.Header.Get("User-Agent")
+		gotAccept = r.Header.Get("Accept")
+		if gotUA == "" || strings.HasPrefix(gotUA, "Go-http-client/") {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	latency, err := httpPing(server.URL+"/favicon.ico", time.Second)
+	if err != nil {
+		t.Fatalf("httpPing() error = %v", err)
+	}
+	if latency < 0 {
+		t.Fatalf("httpPing() latency = %v", latency)
+	}
+	if gotUA != httpPingUserAgent {
+		t.Fatalf("User-Agent = %q, want %q", gotUA, httpPingUserAgent)
+	}
+	if gotAccept != "*/*" {
+		t.Fatalf("Accept = %q, want */*", gotAccept)
+	}
+}
+
+func TestHTTPPingKeepsNonOKStatusAsFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	_, err := httpPing(server.URL, time.Second)
+	if err == nil {
+		t.Fatal("httpPing() succeeded on 403, want failure")
 	}
 }

@@ -95,7 +95,7 @@ func (windowsController) Install(next spec) error {
 	if err := run(nssm, args...); err != nil {
 		return err
 	}
-	_ = run(nssm, "set", next.Name, "DisplayName", "Lite Agent Service")
+	_ = run(nssm, "set", next.Name, "DisplayName", "Lite-Plus Agent Service")
 	_ = run(nssm, "set", next.Name, "Start", "SERVICE_AUTO_START")
 	_ = run(nssm, "set", next.Name, "AppExit", "Default", "Restart")
 	_ = run(nssm, "set", next.Name, "AppRestartDelay", "5000")

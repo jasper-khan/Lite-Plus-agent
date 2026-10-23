@@ -15,6 +15,7 @@ type fakeController struct {
 	detectedName string
 	detected     bool
 	legacy       bool
+	legacyNames  []string
 	running      map[string]bool
 	prevented    []string
 	disabled     []string
@@ -28,7 +29,17 @@ type fakeController struct {
 func (f *fakeController) DetectService(string) (string, bool) {
 	return f.detectedName, f.detected
 }
-func (f *fakeController) LegacyServiceExists(string) bool { return f.legacy }
+func (f *fakeController) LegacyServiceExists(name string) bool {
+	if f.legacyNames != nil {
+		for _, item := range f.legacyNames {
+			if item == name {
+				return true
+			}
+		}
+		return false
+	}
+	return f.legacy && name == komariServiceName
+}
 func (f *fakeController) Collect(string) (spec, error)    { return f.collect, nil }
 func (f *fakeController) Install(next spec) error {
 	f.installed = &next
@@ -131,12 +142,12 @@ func TestDoRelocateDoesNotStopSelfWhenNewAlreadyRunning(t *testing.T) {
 	detectPlanFn = func(string, string, string, string) (plan, bool) {
 		return plan{
 			From: layout{Dir: oldDir, BinaryName: "agent", Service: "komari-agent"},
-			To:   layout{Dir: newDir, BinaryName: "Lite-agent", Service: "lite-agent"},
+			To:   layout{Dir: newDir, BinaryName: "Lite-Plus-agent", Service: "lite-plus-agent"},
 		}, true
 	}
 	ctrl := &fakeController{
 		legacy:  true,
-		running: map[string]bool{"lite-agent": true},
+		running: map[string]bool{"lite-plus-agent": true},
 	}
 	ok, err := doRelocate("linux", []string{src}, nil, ctrl)
 	if err != nil || !ok {
@@ -167,7 +178,7 @@ func TestDoRelocateKeepsOldServiceIfNewDoesNotStart(t *testing.T) {
 	detectPlanFn = func(string, string, string, string) (plan, bool) {
 		return plan{
 			From: layout{Dir: oldDir, BinaryName: "agent", Service: "komari-agent"},
-			To:   layout{Dir: newDir, BinaryName: "Lite-agent", Service: "lite-agent"},
+			To:   layout{Dir: newDir, BinaryName: "Lite-Plus-agent", Service: "lite-plus-agent"},
 		}, true
 	}
 	ctrl := &fakeController{legacy: true, startErr: os.ErrPermission}
@@ -215,7 +226,7 @@ func TestUpgradeFrom2203PreservesDataThenNewProcessUninstallsOld(t *testing.T) {
 	detectPlanFn = func(string, string, string, string) (plan, bool) {
 		return plan{
 			From: layout{Dir: oldDir, BinaryName: "agent", Service: "komari-agent"},
-			To:   layout{Dir: newDir, BinaryName: "Lite-agent", Service: "lite-agent"},
+			To:   layout{Dir: newDir, BinaryName: "Lite-Plus-agent", Service: "lite-plus-agent"},
 		}, true
 	}
 
@@ -240,7 +251,7 @@ func TestUpgradeFrom2203PreservesDataThenNewProcessUninstallsOld(t *testing.T) {
 	if len(oldProc.disabled) != 1 || oldProc.disabled[0] != "komari-agent" {
 		t.Fatalf("old service must be disabled without stop: %v", oldProc.disabled)
 	}
-	if oldProc.installed == nil || filepath.Base(oldProc.installed.Binary) != "Lite-agent" {
+	if oldProc.installed == nil || filepath.Base(oldProc.installed.Binary) != "Lite-Plus-agent" {
 		t.Fatalf("new process name = %+v", oldProc.installed)
 	}
 	if oldProc.installed.WorkDir != newDir {
@@ -274,7 +285,7 @@ func TestUpgradeFrom2203PreservesDataThenNewProcessUninstallsOld(t *testing.T) {
 		t.Fatalf("relocated remote-control.state enabled=%t ok=%t err=%v", enabled, ok, err)
 	}
 
-	copied, err := os.ReadFile(filepath.Join(newDir, "Lite-agent"))
+	copied, err := os.ReadFile(filepath.Join(newDir, "Lite-Plus-agent"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,14 +293,14 @@ func TestUpgradeFrom2203PreservesDataThenNewProcessUninstallsOld(t *testing.T) {
 		t.Fatalf("new binary content = %q", copied)
 	}
 
-	// New Lite-agent process starts from the new directory and uninstalls leftover komari-agent.
-	lookupExecutable = func() (string, error) { return filepath.Join(newDir, "Lite-agent"), nil }
+	// New Plus-agent process starts from the new directory and uninstalls leftover komari-agent.
+	lookupExecutable = func() (string, error) { return filepath.Join(newDir, "Lite-Plus-agent"), nil }
 	detectPlanFn = func(string, string, string, string) (plan, bool) { return plan{}, false }
 	newProc := &fakeController{
 		legacy:       true,
 		detected:     true,
-		detectedName: "lite-agent",
-		running:      map[string]bool{"lite-agent": true, "komari-agent": true},
+		detectedName: "lite-plus-agent",
+		running:      map[string]bool{"lite-plus-agent": true, "komari-agent": true},
 	}
 	if err := retireLeftoverLegacy("linux", newProc); err != nil {
 		t.Fatal(err)
@@ -365,7 +376,7 @@ func TestDoRelocateKeepsAutoDiscoveryMarkerAndIdentityFile(t *testing.T) {
 	detectPlanFn = func(string, string, string, string) (plan, bool) {
 		return plan{
 			From: layout{Dir: oldDir, BinaryName: "agent", Service: "komari-agent"},
-			To:   layout{Dir: newDir, BinaryName: "Lite-agent", Service: "lite-agent"},
+			To:   layout{Dir: newDir, BinaryName: "Lite-Plus-agent", Service: "lite-plus-agent"},
 		}, true
 	}
 
@@ -415,7 +426,7 @@ func TestDoRelocateStopsWhenLegacyIdentityInvalid(t *testing.T) {
 	detectPlanFn = func(string, string, string, string) (plan, bool) {
 		return plan{
 			From: layout{Dir: oldDir, BinaryName: "agent", Service: "komari-agent"},
-			To:   layout{Dir: newDir, BinaryName: "Lite-agent", Service: "lite-agent"},
+			To:   layout{Dir: newDir, BinaryName: "Lite-Plus-agent", Service: "lite-plus-agent"},
 		}, true
 	}
 

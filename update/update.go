@@ -22,14 +22,17 @@ import (
 )
 
 var (
-	CurrentVersion string = "2.3.6.3"
-	Repo           string = "nuomiiiii/Lite-agent"
+	CurrentVersion string = "0.0.0.1"
+	// Repo is the Plus agent GitHub release channel. Do not point at Lite-agent.
+	Repo string = "nuomiiiii/Lite-Plus-agent"
 )
 
 const (
-	snapshotVersionPrefix     = "Snapshot-"
-	containerMarkerPath       = "/.lite-agent-container"
-	legacyContainerMarkerPath = "/.komari-agent-container"
+	snapshotVersionPrefix         = "Snapshot-"
+	containerMarkerPath           = "/.lite-plus-agent-container"
+	liteContainerMarkerPath       = "/.lite-agent-container"
+	legacyContainerMarkerPath     = "/.komari-agent-container"
+	releaseAssetPrefix            = "Lite-Plus-agent"
 	githubAPIBaseURL          = "https://api.github.com"
 	regularCheckInterval      = 6 * time.Hour
 	retryCheckInterval        = 15 * time.Minute
@@ -128,6 +131,21 @@ func parseVersion(ver string) (comparableVersion, error) {
 	return comparableVersion{base: base, revision: revision, explicitRevision: true}, nil
 }
 
+// BumpPatch adds one to the fourth Plus-agent segment (0.0.0.1 → 0.0.0.2).
+func BumpPatch(version string) (string, error) {
+	parsed, err := parseVersion(version)
+	if err != nil {
+		return "", err
+	}
+	if !parsed.explicitRevision {
+		return "", fmt.Errorf("plus-agent version %q must have four numeric segments", version)
+	}
+	parsed.revision++
+	parsed.base.Pre = nil
+	parsed.base.Build = nil
+	return parsed.String(), nil
+}
+
 // compareVersions keeps the historical 2.1.x same-release suffix ordering.
 // For example, 2.1.62 is the second refresh of 2.1.6, while 2.1.7 is the
 // next feature release. Other version lines retain standard semver ordering.
@@ -203,7 +221,7 @@ func assetName(prefix, goos, goarch string) string {
 }
 
 func expectedAssetName(goos, goarch string) string {
-	return assetName("Lite-agent", goos, goarch)
+	return assetName(releaseAssetPrefix, goos, goarch)
 }
 
 func expectedAssetNames(goos, goarch string) []string {
@@ -294,11 +312,12 @@ func snapshotNeedsUpdate(currentVersion string, latest snapshotReleaseCandidate)
 }
 
 func isContainerAgent() bool {
-	if _, err := os.Stat(containerMarkerPath); err == nil {
-		return true
+	for _, marker := range []string{containerMarkerPath, liteContainerMarkerPath, legacyContainerMarkerPath} {
+		if _, err := os.Stat(marker); err == nil {
+			return true
+		}
 	}
-	_, err := os.Stat(legacyContainerMarkerPath)
-	return err == nil
+	return false
 }
 
 func listUpdateReleases() (owner, repo string, releases []githubRelease, err error) {
@@ -338,7 +357,7 @@ func listGitHubReleases(owner, repo string) ([]githubRelease, error) {
 		}
 
 		req.Header.Set("Accept", "application/vnd.github+json")
-		req.Header.Set("User-Agent", "Lite-agent")
+		req.Header.Set("User-Agent", "Lite-Plus-agent")
 		if token := os.Getenv("GITHUB_TOKEN"); token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
@@ -528,8 +547,25 @@ func checkAndUpdateSnapshot(updater *selfupdate.Updater) error {
 	return nil
 }
 
+func updateChannelConfigured() bool {
+	repo := strings.TrimSpace(Repo)
+	if repo == "" {
+		return false
+	}
+	switch strings.ToLower(repo) {
+	case "nuomiiiii/lite-agent", "nuomiiiii/komari-agent":
+		return false
+	default:
+		return true
+	}
+}
+
 // CheckAndUpdate checks GitHub for a newer agent and applies it.
 func CheckAndUpdate() error {
+	if !updateChannelConfigured() {
+		log.Println("Automatic updates are disabled: Plus update channel is not configured.")
+		return nil
+	}
 	log.Println("Checking update...")
 
 	http.DefaultClient = dnsresolver.GetHTTPClient(60 * time.Second)

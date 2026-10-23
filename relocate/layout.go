@@ -8,10 +8,18 @@ import (
 )
 
 const (
-	legacyServiceName = "komari-agent"
-	newServiceName    = "lite-agent"
-	legacyPlistPrefix = "com.komari."
-	newPlistPrefix    = "com.lite."
+	komariServiceName = "komari-agent"
+	liteServiceName   = "lite-agent"
+	plusServiceName   = "lite-plus-agent"
+
+	komariPlistPrefix = "com.komari."
+	litePlistPrefix   = "com.lite."
+	plusPlistPrefix   = "com.liteplus."
+
+	// newServiceName is the Plus layout that install and leftover cleanup target.
+	newServiceName = plusServiceName
+	// legacyServiceName remains the oldest product so leftover komari units still retire.
+	legacyServiceName = komariServiceName
 )
 
 var sidecarNames = []string{
@@ -28,6 +36,7 @@ type layout struct {
 	BinaryName string
 	Service    string
 	PlistLabel string
+	User       bool
 }
 
 type plan struct {
@@ -35,54 +44,117 @@ type plan struct {
 	To   layout
 }
 
-func defaultLayouts(goos, home, programFiles string) (legacy, modern []layout) {
+func leftoverServiceNames() []string {
+	return []string{liteServiceName, komariServiceName}
+}
+
+func plusBinaryName(goos string) string {
+	if goos == "windows" {
+		return "Lite-Plus-agent.exe"
+	}
+	return "Lite-Plus-agent"
+}
+
+func plusLayouts(goos, home, programFiles string) []layout {
 	switch goos {
 	case "windows":
 		if programFiles == "" {
 			programFiles = `C:\Program Files`
 		}
-		legacy = []layout{{
-			Dir:        filepath.Join(programFiles, "Komari"),
-			BinaryName: "komari-agent.exe",
-			Service:    legacyServiceName,
-		}}
-		modern = []layout{{
-			Dir:        filepath.Join(programFiles, "Lite"),
-			BinaryName: "Lite-agent.exe",
-			Service:    newServiceName,
+		return []layout{{
+			Dir:        filepath.Join(programFiles, "Lite-Plus"),
+			BinaryName: plusBinaryName(goos),
+			Service:    plusServiceName,
 		}}
 	case "darwin":
-		legacy = []layout{
-			{Dir: "/usr/local/komari", BinaryName: "agent", Service: legacyServiceName, PlistLabel: legacyPlistPrefix + legacyServiceName},
+		items := []layout{{
+			Dir:        "/usr/local/lite-plus-agent",
+			BinaryName: plusBinaryName(goos),
+			Service:    plusServiceName,
+			PlistLabel: plusPlistPrefix + plusServiceName,
+		}}
+		if home != "" {
+			items = append(items, layout{
+				Dir:        filepath.Join(home, ".lite-plus-agent"),
+				BinaryName: plusBinaryName(goos),
+				Service:    plusServiceName,
+				PlistLabel: plusPlistPrefix + plusServiceName,
+				User:       true,
+			})
 		}
-		modern = []layout{
-			{Dir: "/usr/local/lite-agent", BinaryName: "Lite-agent", Service: newServiceName, PlistLabel: newPlistPrefix + newServiceName},
+		return items
+	default:
+		return []layout{{
+			Dir:        "/opt/lite-plus-agent",
+			BinaryName: plusBinaryName(goos),
+			Service:    plusServiceName,
+		}}
+	}
+}
+
+func sourceLayouts(goos, home, programFiles string) []layout {
+	switch goos {
+	case "windows":
+		if programFiles == "" {
+			programFiles = `C:\Program Files`
+		}
+		return []layout{
+			{
+				Dir:        filepath.Join(programFiles, "Komari"),
+				BinaryName: "komari-agent.exe",
+				Service:    komariServiceName,
+			},
+			{
+				Dir:        filepath.Join(programFiles, "Lite"),
+				BinaryName: "Lite-agent.exe",
+				Service:    liteServiceName,
+			},
+		}
+	case "darwin":
+		items := []layout{
+			{Dir: "/usr/local/komari", BinaryName: "agent", Service: komariServiceName, PlistLabel: komariPlistPrefix + komariServiceName},
+			{Dir: "/usr/local/lite-agent", BinaryName: "Lite-agent", Service: liteServiceName, PlistLabel: litePlistPrefix + liteServiceName},
 		}
 		if home != "" {
-			legacy = append(legacy, layout{Dir: filepath.Join(home, ".komari"), BinaryName: "agent", Service: legacyServiceName, PlistLabel: legacyPlistPrefix + legacyServiceName})
-			modern = append(modern, layout{Dir: filepath.Join(home, ".lite-agent"), BinaryName: "Lite-agent", Service: newServiceName, PlistLabel: newPlistPrefix + newServiceName})
+			items = append(items,
+				layout{Dir: filepath.Join(home, ".komari"), BinaryName: "agent", Service: komariServiceName, PlistLabel: komariPlistPrefix + komariServiceName, User: true},
+				layout{Dir: filepath.Join(home, ".lite-agent"), BinaryName: "Lite-agent", Service: liteServiceName, PlistLabel: litePlistPrefix + liteServiceName, User: true},
+			)
 		}
+		return items
 	default:
-		legacy = []layout{{Dir: "/opt/komari", BinaryName: "agent", Service: legacyServiceName}}
-		modern = []layout{{Dir: "/opt/lite-agent", BinaryName: "Lite-agent", Service: newServiceName}}
+		return []layout{
+			{Dir: "/opt/komari", BinaryName: "agent", Service: komariServiceName},
+			{Dir: "/opt/lite-agent", BinaryName: "Lite-agent", Service: liteServiceName},
+		}
 	}
-	return legacy, modern
+}
+
+func matchingPlusLayout(from layout, targets []layout, _, _ string) layout {
+	if len(targets) == 0 {
+		return layout{}
+	}
+	for _, to := range targets {
+		if to.User == from.User {
+			return to
+		}
+	}
+	return targets[0]
 }
 
 func detectPlan(goos, executable, home, programFiles string) (plan, bool) {
 	execDir := filepath.Clean(filepath.Dir(executable))
-	legacy, modern := defaultLayouts(goos, home, programFiles)
-	for i, from := range legacy {
-		if !sameDir(execDir, from.Dir, goos) {
-			continue
-		}
-		to := modern[0]
-		if i < len(modern) {
-			to = modern[i]
-		}
+	targets := plusLayouts(goos, home, programFiles)
+	for _, to := range targets {
 		if sameDir(execDir, to.Dir, goos) {
 			return plan{}, false
 		}
+	}
+	for _, from := range sourceLayouts(goos, home, programFiles) {
+		if !sameDir(execDir, from.Dir, goos) {
+			continue
+		}
+		to := matchingPlusLayout(from, targets, goos, home)
 		from.Dir = execDir
 		return plan{From: from, To: to}, true
 	}
@@ -90,26 +162,25 @@ func detectPlan(goos, executable, home, programFiles string) (plan, bool) {
 }
 
 // officialLaunchdServiceForExecutable maps the current binary onto one of the
-// two official launchd labels. It does not scan LaunchDaemons; leftover
-// komari-agent plists must not hide a Lite-agent that is already on the new path.
+// official launchd labels. It does not scan LaunchDaemons; leftover komari-agent
+// or lite-agent plists must not hide a Plus-agent that is already on the new path.
 func officialLaunchdServiceForExecutable(executable, home string, plistExists func(label string) bool) (string, bool) {
 	execDir := filepath.Clean(filepath.Dir(executable))
-	legacy, modern := defaultLayouts("darwin", home, "")
-	for _, item := range modern {
+	for _, item := range plusLayouts("darwin", home, "") {
 		if !sameDir(execDir, item.Dir, "darwin") {
 			continue
 		}
-		if plistExists(newPlistPrefix + newServiceName) {
-			return newServiceName, true
+		if plistExists(plusPlistPrefix + plusServiceName) {
+			return plusServiceName, true
 		}
 		return "", false
 	}
-	for _, item := range legacy {
+	for _, item := range sourceLayouts("darwin", home, "") {
 		if !sameDir(execDir, item.Dir, "darwin") {
 			continue
 		}
-		if plistExists(legacyPlistPrefix + legacyServiceName) {
-			return legacyServiceName, true
+		if item.PlistLabel != "" && plistExists(item.PlistLabel) {
+			return item.Service, true
 		}
 		return "", false
 	}
@@ -118,8 +189,7 @@ func officialLaunchdServiceForExecutable(executable, home string, plistExists fu
 
 func onModernLayout(goos, executable, home, programFiles string) bool {
 	execDir := filepath.Clean(filepath.Dir(executable))
-	_, modern := defaultLayouts(goos, home, programFiles)
-	for _, to := range modern {
+	for _, to := range plusLayouts(goos, home, programFiles) {
 		if sameDir(execDir, to.Dir, goos) {
 			return true
 		}
@@ -206,7 +276,7 @@ func processAgentEnv(environ []string) []string {
 }
 
 func isContainer(stat func(string) error) bool {
-	for _, marker := range []string{"/.lite-agent-container", "/.komari-agent-container"} {
+	for _, marker := range []string{"/.lite-plus-agent-container", "/.lite-agent-container", "/.komari-agent-container"} {
 		if err := stat(marker); err == nil {
 			return true
 		}
@@ -227,7 +297,7 @@ func LooksLikeExistingInstall() bool {
 }
 
 // LooksLikePriorHostInstall reports a previous host agent that should keep
-// remote control on. Empty modern install directories and Docker images are
+// remote control on. Empty Plus install directories and Docker images are
 // not treated as upgrades unless sidecar data from an older agent is present.
 func LooksLikePriorHostInstall() bool {
 	exe, err := os.Executable()
@@ -264,11 +334,10 @@ func looksLikeExistingInstall(goos, executable, home, programFiles string, stat 
 	return looksLikeUpgradeSidecar(execDir, stat)
 }
 
-func looksLikeLayoutDir(execDir, goos, home, programFiles string, legacyOnly bool) bool {
-	legacy, modern := defaultLayouts(goos, home, programFiles)
-	layouts := legacy
-	if !legacyOnly {
-		layouts = append(append([]layout{}, legacy...), modern...)
+func looksLikeLayoutDir(execDir, goos, home, programFiles string, priorOnly bool) bool {
+	layouts := sourceLayouts(goos, home, programFiles)
+	if !priorOnly {
+		layouts = append(append([]layout{}, layouts...), plusLayouts(goos, home, programFiles)...)
 	}
 	for _, item := range layouts {
 		if sameDir(execDir, item.Dir, goos) {

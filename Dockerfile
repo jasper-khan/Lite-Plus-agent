@@ -6,16 +6,16 @@ WORKDIR /app
 ARG TARGETOS
 ARG TARGETARCH
 
-COPY Lite-agent-${TARGETOS}-${TARGETARCH} /app/Lite-agent
+COPY Lite-Plus-agent-${TARGETOS}-${TARGETARCH} /app/Lite-Plus-agent
 
-RUN chmod +x /app/Lite-agent
+RUN chmod +x /app/Lite-Plus-agent
 
-# New marker is Lite-agent. Keep the komari-agent marker so upgraded
-# containers still skip binary self-update.
-RUN touch /.lite-agent-container /.komari-agent-container
+# Plus marker is Lite-Plus-agent. Keep older markers so upgraded
+# containers still skip binary self-update and layout relocate.
+RUN touch /.lite-plus-agent-container /.lite-agent-container /.komari-agent-container
 
-ENTRYPOINT ["/app/Lite-agent"]
+ENTRYPOINT ["/app/Lite-Plus-agent"]
 # 运行时请指定参数
 # Please specify parameters at runtime.
-# eg: docker run lite-agent -e example.com -t token --enable-remote-control=false
+# eg: docker run lite-plus-agent -e example.com -t token --enable-remote-control=false
 CMD ["--help"]

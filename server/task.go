@@ -517,6 +517,9 @@ func tcpPing(target string, timeout time.Duration) (float64, error) {
 	return latencyMilliseconds(time.Since(start)), nil
 }
 
+// httpPingUserAgent 用常见浏览器标识，避免站点把 Go 默认 UA 直接拦成 403。
+const httpPingUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
 func httpPing(target string, timeout time.Duration) (float64, error) {
 	// Handle raw IPv6 address for URL
 	if strings.Contains(target, ":") && !strings.Contains(target, "[") {
@@ -529,6 +532,13 @@ func httpPing(target string, timeout time.Duration) (float64, error) {
 	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
 		target = "http://" + target
 	}
+
+	req, err := http.NewRequest(http.MethodGet, target, nil)
+	if err != nil {
+		return -1, err
+	}
+	req.Header.Set("User-Agent", httpPingUserAgent)
+	req.Header.Set("Accept", "*/*")
 
 	transport := &http.Transport{
 		DisableKeepAlives: true,
@@ -552,7 +562,7 @@ func httpPing(target string, timeout time.Duration) (float64, error) {
 		Transport: transport,
 	}
 	start := time.Now()
-	resp, err := client.Get(target)
+	resp, err := client.Do(req)
 	latency := latencyMilliseconds(time.Since(start))
 	if err != nil {
 		return -1, err

@@ -60,7 +60,7 @@ func launchHasLegacyAutoDiscovery(args, env []string) bool {
 func requireSavedIdentityForLegacyLaunch(args, environ []string, collected spec, fromDir string) error {
 	launchArgs := args
 	if len(collected.Args) > 0 {
-		prefix := "Lite-agent"
+		prefix := "Lite-Plus-agent"
 		if len(args) > 0 {
 			prefix = args[0]
 		}

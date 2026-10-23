@@ -1,0 +1,206 @@
+name: Follow Lite-agent
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      lite_agent_tag:
+        description: Lite-agent stable tag to follow (empty = latest public stable)
+        required: false
+        type: string
+
+concurrency:
+  group: follow-lite-agent
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+jobs:
+  follow:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    outputs:
+      plus_tag: ${{ steps.result.outputs.plus_tag }}
+      skipped: ${{ steps.result.outputs.skipped }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PLUS_FOLLOW_TOKEN || github.token }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.10"
+          check-latest: false
+
+      - name: Confirm Go 1.26.10
+        run: |
+          set -euo pipefail
+          go version
+          test "$(go env GOVERSION)" = "go1.26.10"
+          echo "GOTOOLCHAIN=local" >> "$GITHUB_ENV"
+
+      - name: Follow Lite-agent tag
+        id: result
+        env:
+          GH_TOKEN: ${{ secrets.PLUS_FOLLOW_TOKEN || github.token }}
+          REQUESTED_TAG: ${{ inputs.lite_agent_tag }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [ ! -f plus-baseline.json ]; then
+            echo "plus-baseline.json is missing"
+            exit 1
+          fi
+
+          KEYS="$(python3 -c "import json; print(','.join(sorted(json.load(open('plus-baseline.json')))))")"
+          if [ "$KEYS" != "lite_agent,lite_plus_agent" ]; then
+            echo "plus-baseline.json must contain only lite_plus_agent and lite_agent, got: $KEYS"
+            exit 1
+          fi
+
+          PLUS="$(python3 -c "import json; print(json.load(open('plus-baseline.json'))['lite_plus_agent'])")"
+          BASELINE="$(python3 -c "import json; print(json.load(open('plus-baseline.json'))['lite_agent'])")"
+          echo "current lite_plus_agent=$PLUS lite_agent=$BASELINE"
+
+          if [ -n "${REQUESTED_TAG:-}" ]; then
+            TAG="$REQUESTED_TAG"
+          else
+            TAG="$(gh api repos/nuomiiiii/Lite-agent/releases --paginate --jq '[.[] | select(.draft==false and .prerelease==false and (.tag_name | test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$")))] | .[0].tag_name')"
+          fi
+
+          if [ -z "$TAG" ]; then
+            echo "no Lite-agent stable tag found"
+            exit 1
+          fi
+          if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "refusing non-stable Lite-agent tag: $TAG"
+            exit 1
+          fi
+          echo "follow Lite-agent $TAG"
+
+          if [ "$TAG" = "$BASELINE" ]; then
+            echo "already following $TAG"
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git remote add lite-upstream https://github.com/nuomiiiii/Lite-agent.git 2>/dev/null || git remote set-url lite-upstream https://github.com/nuomiiiii/Lite-agent.git
+          git fetch lite-upstream tag "$TAG" --no-tags
+
+          XRAY_MOD="$(go list -m -f '{{.Version}}' github.com/xtls/xray-core)"
+          SINGBOX_MOD="$(go list -m -f '{{.Version}}' github.com/sagernet/sing-box)"
+
+          set +e
+          git merge --no-ff --no-edit "refs/tags/$TAG"
+          MERGE_STATUS=$?
+          set -e
+
+          if [ "$MERGE_STATUS" -ne 0 ]; then
+            BRANCH="follow/lite-agent-$TAG"
+            git add -A
+            git commit -m "follow: Lite-agent ${TAG} (conflicts, needs review)" || true
+            git checkout -B "$BRANCH"
+            git push -u origin "$BRANCH"
+            gh pr create --title "Follow Lite-agent $TAG" --body "Automatic merge of Lite-agent \`$TAG\` failed. Fix conflicts, keep plus-baseline.json to \`lite_plus_agent\` + \`lite_agent\` only, then re-run Follow Lite-agent." || true
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          NEW_PLUS="$(go run ./cmd/plusversion bump "$PLUS")"
+          python3 scripts/rewrite-follow-version.py "$NEW_PLUS" "$TAG"
+
+          go get "github.com/xtls/xray-core@${XRAY_MOD}"
+          go get "github.com/sagernet/sing-box@${SINGBOX_MOD}"
+          go mod tidy
+
+          go test -tags with_quic,with_utls ./...
+
+          git add -A
+          git commit -m "follow: Lite-agent ${TAG} → Plus-agent ${NEW_PLUS}"
+          git tag "$NEW_PLUS"
+          git push origin HEAD
+          git push origin "$NEW_PLUS"
+
+          LITE_NOTES="$(gh api "repos/nuomiiiii/Lite-agent/releases/tags/${TAG}" --jq '.body // empty' | sed 's/\r$//')"
+          if [ -z "$LITE_NOTES" ]; then
+            LITE_NOTES="Lite-agent ${TAG}。"
+          fi
+          XRAY_VER="$(python3 -c "import re,pathlib; t=pathlib.Path('nodemgt/coreadapter/versions.go').read_text(); print(re.search(r'XrayVersion = \"([^\"]+)\"', t).group(1))")"
+          SING_VER="$(python3 -c "import re,pathlib; t=pathlib.Path('nodemgt/coreadapter/versions.go').read_text(); print(re.search(r'SingBoxVersion = \"([^\"]+)\"', t).group(1))")"
+
+          BODY="$(printf '基于 Lite-agent %s\n\nPlus 本版：\n- 跟进 Lite-agent %s。\n\n内核：Xray %s · sing-box %s\n\n来自 Lite-agent 的变更：\n%s\n' "$TAG" "$TAG" "$XRAY_VER" "$SING_VER" "$LITE_NOTES")"
+
+          gh release create "$NEW_PLUS" --title "$NEW_PLUS" --notes "$BODY"
+
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
+          echo "plus_tag=$NEW_PLUS" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch Docker image
+        env:
+          GH_TOKEN: ${{ secrets.PLUS_FOLLOW_TOKEN }}
+        if: ${{ steps.result.outputs.skipped != 'true' && env.GH_TOKEN != '' }}
+        run: gh workflow run release-docker.yml -f tag="${{ steps.result.outputs.plus_tag }}"
+
+  build-binaries:
+    needs: follow
+    if: ${{ needs.follow.outputs.skipped != 'true' && needs.follow.outputs.plus_tag != '' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        exclude:
+          - goos: windows
+            goarch: arm
+          - goos: darwin
+            goarch: 386
+          - goos: darwin
+            goarch: arm
+        include:
+          - goos: linux
+            goarch: loong64
+        goos: [windows, linux, darwin, freebsd]
+        goarch: [amd64, arm64, 386, arm]
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.follow.outputs.plus_tag }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.10"
+          check-latest: false
+
+      - name: Confirm Go 1.26.10
+        run: |
+          set -euo pipefail
+          go version
+          test "$(go env GOVERSION)" = "go1.26.10"
+          echo "GOTOOLCHAIN=local" >> "$GITHUB_ENV"
+
+      - name: Build and upload
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+          VERSION: ${{ needs.follow.outputs.plus_tag }}
+          GH_TOKEN: ${{ secrets.PLUS_FOLLOW_TOKEN || github.token }}
+        run: |
+          INTERNAL_VERSION="${VERSION}+${GITHUB_SHA::7}"
+          BINARY_NAME=Lite-Plus-agent-${{ matrix.goos }}-${{ matrix.goarch }}
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            BINARY_NAME=${BINARY_NAME}.exe
+          fi
+          go build -tags with_quic,with_utls -trimpath -ldflags="-s -w -X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${INTERNAL_VERSION} -X github.com/nuomiiiii/lite-agent/update.Repo=${{ github.repository }}" -o "$BINARY_NAME"
+          gh release upload "$VERSION" "$BINARY_NAME" --repo "${{ github.repository }}" --clobber
+        shell: bash

@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Migrate an existing komari-agent install to Lite-agent.
+# Migrate an existing komari-agent install to Lite-Plus-agent.
 # Keeps the original endpoint, node token, and launch flags, then
-# uninstalls komari-agent after Lite-agent is running.
+# uninstalls komari-agent after Lite-Plus-agent is running.
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -19,7 +19,7 @@ log_step() { echo -e "${NC} $1"; }
 log_config() { echo -e "${CYAN}[CONFIG]${NC} $1"; }
 
 legacy_service_name="komari-agent"
-github_repo="nuomiiiii/Lite-agent"
+github_repo="nuomiiiii/Lite-Plus-agent"
 github_proxy=""
 install_version=""
 endpoint_override=""
@@ -30,22 +30,22 @@ os_type=$(uname -s)
 case $os_type in
     Darwin)
         os_name="darwin"
-        target_dir="/usr/local/lite-agent"
+        target_dir="/usr/local/lite-plus-agent"
         if [ ! -w "/usr/local" ] && [ "$EUID" -ne 0 ]; then
-            target_dir="$HOME/.lite-agent"
+            target_dir="$HOME/.lite-plus-agent"
         fi
         ;;
     Linux)
         os_name="linux"
-        target_dir="/opt/lite-agent"
+        target_dir="/opt/lite-plus-agent"
         ;;
     FreeBSD)
         os_name="freebsd"
-        target_dir="/opt/lite-agent"
+        target_dir="/opt/lite-plus-agent"
         ;;
     MINGW*|MSYS*|CYGWIN*)
         os_name="windows"
-        target_dir="/c/lite-agent"
+        target_dir="/c/lite-plus-agent"
         ;;
     *)
         log_error "Unsupported operating system: $os_type"
@@ -85,7 +85,7 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --install-dir|--install-service-name)
-            log_error "Migration always uses the default Lite-agent directory and service name."
+            log_error "Migration always uses the default Lite-Plus-agent directory and service name."
             log_error "Run this script without $1 so komari-agent can be uninstalled afterward."
             exit 1
             ;;
@@ -124,8 +124,8 @@ if [ "$EUID" -ne 0 ] && [ "$require_root_for_deps" = true ]; then
     exit 1
 fi
 
-if [ -f /.lite-agent-container ] || [ -f /.komari-agent-container ] || [ -f /.dockerenv ]; then
-    log_error "This host looks like a container. Recreate the Lite-agent container with the original -e and -t."
+if [ -f /.lite-plus-agent-container ] || [ -f /.lite-agent-container ] || [ -f /.komari-agent-container ] || [ -f /.dockerenv ]; then
+    log_error "This host looks like a container. Recreate the Lite-Plus-agent container with the original -e and -t."
     exit 1
 fi
 
@@ -683,10 +683,10 @@ if ! has_named_flag config "" && [ -f "$target_dir/config.json" ]; then
 fi
 
 echo -e "${WHITE}===========================================${NC}"
-echo -e "${WHITE}    Lite Agent Migration Script        ${NC}"
+echo -e "${WHITE}    Lite-Plus Agent Migration Script        ${NC}"
 echo -e "${WHITE}===========================================${NC}"
 echo ""
-log_config "Keeping the original node token and installing Lite-agent"
+log_config "Keeping the original node token and installing Lite-Plus-agent"
 log_config "  Endpoint: ${GREEN}$(flag_value_from_args endpoint e)${NC}"
 if [ -n "$sidecar_uuid" ]; then
     log_config "  Saved UUID: ${GREEN}$sidecar_uuid${NC}"
@@ -709,7 +709,7 @@ else
     fi
     installer=$(mktemp)
     trap 'rm -f "$installer"' EXIT
-    log_step "Downloading Lite-agent install.sh..."
+    log_step "Downloading Lite-Plus-agent install.sh..."
     if command -v curl >/dev/null 2>&1; then
         if ! curl -fsSL "$raw_url" -o "$installer"; then
             log_error "Failed to download install.sh"
@@ -738,10 +738,10 @@ if [ -n "$install_version" ]; then
     install_flags+=(--install-version "$install_version")
 fi
 
-log_step "Installing Lite-agent with the original node key..."
+log_step "Installing Lite-Plus-agent with the original node key..."
 bash "$installer" "${install_flags[@]+"${install_flags[@]}"}" "${collected[@]}"
 install_status=$?
 if [ "$install_status" -ne 0 ]; then
     exit "$install_status"
 fi
-log_success "Migration finished. Confirm the node is online in Lite."
+log_success "Migration finished. Confirm the node is online in Lite-Plus."

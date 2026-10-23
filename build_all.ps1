@@ -37,7 +37,7 @@ foreach ($goos in $osList) {
 
         Write-Host "Building for $goos/$goarch..." -ForegroundColor $White
 
-        $binaryName = "Lite-agent-$goos-$goarch"
+        $binaryName = "Lite-Plus-agent-$goos-$goarch"
         if ($goos -eq 'windows') { $binaryName = "$binaryName.exe" }
         $outPath = Join-Path $buildDir $binaryName
 
@@ -46,7 +46,7 @@ foreach ($goos in $osList) {
         $env:GOARCH = $goarch
         $env:CGO_ENABLED = '0'
 
-        & go build -trimpath -ldflags "-s -w -X github.com/nuomiiiii/lite-agent/update.CurrentVersion=$version -X github.com/nuomiiiii/lite-agent/update.Repo=nuomiiiii/Lite-agent" -o "$outPath"
+        & go build -tags with_quic,with_utls -trimpath -ldflags "-s -w -X github.com/nuomiiiii/lite-agent/update.CurrentVersion=$version -X github.com/nuomiiiii/lite-agent/update.Repo=nuomiiiii/Lite-Plus-agent -X github.com/sagernet/sing-box/constant.Version=1.14.3" -o "$outPath"
         if ($LASTEXITCODE -ne 0) {
             Write-Host "Failed to build for $goos/$goarch" -ForegroundColor $Red
             $failedBuilds += "$goos/$goarch"

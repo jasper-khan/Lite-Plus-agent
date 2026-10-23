@@ -27,7 +27,15 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.26.10"
+          check-latest: false
+
+      - name: Confirm Go 1.26.10
+        run: |
+          set -euo pipefail
+          go version
+          test "$(go env GOVERSION)" = "go1.26.10"
+          echo "GOTOOLCHAIN=local" >> "$GITHUB_ENV"
 
       - name: Run Agent regression tests
         run: go test ./server ./update
@@ -89,7 +97,15 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.26.10"
+          check-latest: false
+
+      - name: Confirm Go 1.26.10
+        run: |
+          set -euo pipefail
+          go version
+          test "$(go env GOVERSION)" = "go1.26.10"
+          echo "GOTOOLCHAIN=local" >> "$GITHUB_ENV"
 
       - name: Build binary
         env:
@@ -98,17 +114,17 @@ jobs:
           CGO_ENABLED: 0
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          BINARY_NAME=Lite-agent-${{ matrix.goos }}-${{ matrix.goarch }}
+          BINARY_NAME=Lite-Plus-agent-${{ matrix.goos }}-${{ matrix.goarch }}
           if [ "${{ matrix.goos }}" = "windows" ]; then
             BINARY_NAME=${BINARY_NAME}.exe
           fi
-          go build -trimpath -ldflags="-s -w -X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${VERSION} -X github.com/nuomiiiii/lite-agent/update.Repo=${{ github.repository }}" -o $BINARY_NAME
+          go build -tags with_quic,with_utls -trimpath -ldflags="-s -w -X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${VERSION} -X github.com/nuomiiiii/lite-agent/update.Repo=${{ github.repository }}" -o $BINARY_NAME
 
       - name: Upload binary as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Lite-agent-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: Lite-agent-${{ matrix.goos }}-${{ matrix.goarch }}*
+          name: Lite-Plus-agent-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: Lite-Plus-agent-${{ matrix.goos }}-${{ matrix.goarch }}*
 
   publish-snapshot-release:
     needs: [prepare, build-and-attach-binaries]
@@ -157,7 +173,7 @@ jobs:
             --title "${VERSION}" \
             --notes "Automated snapshot build (${VERSION}) from commit ${{ github.sha }}." \
             --prerelease \
-            artifacts/Lite-agent-*
+            artifacts/Lite-Plus-agent-*
 
           gh release list \
             --repo "${{ github.repository }}" \
@@ -200,7 +216,15 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.26.10"
+          check-latest: false
+
+      - name: Confirm Go 1.26.10
+        run: |
+          set -euo pipefail
+          go version
+          test "$(go env GOVERSION)" = "go1.26.10"
+          echo "GOTOOLCHAIN=local" >> "$GITHUB_ENV"
 
       - name: Build static binaries for multi-arch
         env:
@@ -211,10 +235,10 @@ jobs:
           LDFLAGS="-s -w -X github.com/nuomiiiii/lite-agent/update.CurrentVersion=${VERSION} -X github.com/nuomiiiii/lite-agent/update.Repo=${{ github.repository }}"
 
           echo "Building for linux/amd64..."
-          GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o Lite-agent-linux-amd64
+          GOARCH=amd64 go build -tags with_quic,with_utls -trimpath -ldflags="$LDFLAGS" -o Lite-Plus-agent-linux-amd64
 
           echo "Building for linux/arm64..."
-          GOARCH=arm64 go build -trimpath -ldflags="$LDFLAGS" -o Lite-agent-linux-arm64
+          GOARCH=arm64 go build -tags with_quic,with_utls -trimpath -ldflags="$LDFLAGS" -o Lite-Plus-agent-linux-arm64
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

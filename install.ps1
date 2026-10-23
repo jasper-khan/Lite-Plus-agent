@@ -1,4 +1,4 @@
-# Windows PowerShell installation script for Lite-agent
+# Windows PowerShell installation script for Lite-Plus-agent
 
 # Logging functions with colors
 function Log-Info { param([string]$Message) Write-Host "$Message"    -ForegroundColor Cyan }
@@ -37,12 +37,14 @@ function Redact-AgentArgs {
 }
 
 # Default parameters
-$InstallDir = Join-Path $Env:ProgramFiles "Lite"
-$ServiceName = "lite-agent"
+$InstallDir = Join-Path $Env:ProgramFiles "Lite-Plus"
+$ServiceName = "lite-plus-agent"
 $GitHubProxy = ""
 $AgentArgs = @()
 $InstallVersion = ""
-$GitHubRepo = "nuomiiiii/Lite-agent"
+$GitHubRepo = "nuomiiiii/Lite-Plus-agent"
+$LiteDir = Join-Path $Env:ProgramFiles "Lite"
+$LiteServiceName = "lite-agent"
 $LegacyServiceName = "komari-agent"
 $CustomLayout = $false
 
@@ -196,7 +198,7 @@ catch {
 Log-Step "Installation configuration:"
 Log-Config "Service name: $ServiceName"
 Log-Config "Install directory: $InstallDir"
-Log-Config "Process: $(Join-Path $InstallDir 'Lite-agent.exe')"
+Log-Config "Process: $(Join-Path $InstallDir 'Lite-Plus-agent.exe')"
 Log-Config "GitHub proxy: $ProxyDisplay"
 Log-Config "Agent arguments: $(Redact-AgentArgs $AgentArgs)"
 if ($InstallVersion -ne "") {
@@ -206,8 +208,8 @@ if ($InstallVersion -ne "") {
 }
 
 # Paths
-$BinaryName = "Lite-agent-windows-$arch.exe"
-$AgentPath = Join-Path $InstallDir "Lite-agent.exe"
+$BinaryName = "Lite-Plus-agent-windows-$arch.exe"
+$AgentPath = Join-Path $InstallDir "Lite-Plus-agent.exe"
 $LegacyDir = Join-Path $Env:ProgramFiles "Komari"
 $LegacyAgentPath = Join-Path $LegacyDir "komari-agent.exe"
 
@@ -274,7 +276,9 @@ function Test-AgentServiceExists {
 }
 
 function Test-LegacyInstallPresent {
+    if (Test-AgentServiceExists $LiteServiceName) { return $true }
     if (Test-AgentServiceExists $LegacyServiceName) { return $true }
+    if (Test-Path $LiteDir) { return $true }
     return (Test-Path $LegacyDir)
 }
 
@@ -393,6 +397,10 @@ if (Test-AgentServiceExists $ServiceName) {
     $managedExists = $true
     $existingArgs = ConvertFrom-ArgString ((nssm get $ServiceName AppParameters 2>&1 | Out-String))
 }
+elseif (-not $CustomLayout -and (Test-AgentServiceExists $LiteServiceName)) {
+    $managedExists = $true
+    $existingArgs = ConvertFrom-ArgString ((nssm get $LiteServiceName AppParameters 2>&1 | Out-String))
+}
 elseif (-not $CustomLayout -and (Test-AgentServiceExists $LegacyServiceName)) {
     $managedExists = $true
     $existingArgs = ConvertFrom-ArgString ((nssm get $LegacyServiceName AppParameters 2>&1 | Out-String))
@@ -400,11 +408,12 @@ elseif (-not $CustomLayout -and (Test-AgentServiceExists $LegacyServiceName)) {
 $AgentArgs = @(Resolve-RemoteControlInstallArgs -Incoming $AgentArgs -ManagedExists $managedExists -ExistingArgs $existingArgs)
 
 if (-not $CustomLayout) {
+    Copy-SidecarsFrom -SourceDir $LiteDir
     Copy-SidecarsFrom -SourceDir $LegacyDir
 }
 else {
     if (Test-LegacyInstallPresent) {
-        Log-Step "Custom install layout; leaving komari-agent in place."
+        Log-Step "Custom install layout; leaving lite-agent and komari-agent in place."
     }
     Remove-AgentService -Name $ServiceName
 }
@@ -433,10 +442,10 @@ if ($InstallVersion -ne "") {
 else {
     Log-Info "No version specified, installing the latest version."
 }
-Log-Success "Installing Lite-agent version: $versionToInstall"
+Log-Success "Installing Lite-Plus-agent version: $versionToInstall"
 
-# Stop the destination Lite-agent service before replacing the exe.
-# Leave komari-agent running until the new process is up.
+# Stop the destination Lite-Plus-agent service before replacing the exe.
+# Leave lite-agent / komari-agent running until the new process is up.
 $existing = nssm status $ServiceName 2>&1 | Out-String
 if ($existing -notmatch "does not exist") {
     Remove-AgentService -Name $ServiceName
@@ -450,7 +459,7 @@ foreach ($candidate in @(
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     Log-Info "URL: $DownloadUrl"
     try {
-        Invoke-WebRequest -Uri $DownloadUrl -OutFile $AgentPath -UseBasicParsing -UserAgent "Lite-agent-install (+https://github.com/nuomiiiii/Lite-agent)"
+        Invoke-WebRequest -Uri $DownloadUrl -OutFile $AgentPath -UseBasicParsing -UserAgent "Lite-Plus-agent-install (+https://github.com/nuomiiiii/Lite-Plus-agent)"
         $downloaded = $true
         break
     }
@@ -469,29 +478,35 @@ Log-Step "Configuring Windows service with nssm..."
 $argString = $AgentArgs -join ' '
 $quotedAgentPath = "`"$AgentPath`""
 nssm install $ServiceName $quotedAgentPath $argString
-nssm set $ServiceName DisplayName "Lite Agent Service"
+nssm set $ServiceName DisplayName "Lite-Plus Agent Service"
 nssm set $ServiceName Start SERVICE_AUTO_START
 nssm set $ServiceName AppExit Default Restart
 nssm set $ServiceName AppRestartDelay 5000
 nssm set $ServiceName AppDirectory $InstallDir
 nssm start $ServiceName
 if (-not (Wait-AgentService -Name $ServiceName)) {
-    if (Test-AgentServiceExists $LegacyServiceName) {
-        Log-Error "Lite-agent service $ServiceName did not become running; leaving komari-agent in place"
+    if ((Test-AgentServiceExists $LiteServiceName) -or (Test-AgentServiceExists $LegacyServiceName)) {
+        Log-Error "Lite-Plus-agent service $ServiceName did not become running; leaving previous agents in place"
     }
     else {
-        Log-Error "Lite-agent service $ServiceName did not become running"
+        Log-Error "Lite-Plus-agent service $ServiceName did not become running"
     }
     exit 1
 }
-if (-not $CustomLayout -and $ServiceName -ne $LegacyServiceName -and (Test-AgentServiceExists $LegacyServiceName)) {
-    Log-Step "Retiring legacy service $LegacyServiceName after Lite-agent is running..."
-    & nssm set $LegacyServiceName AppExit Default Exit 2>&1 | Out-Null
-    Remove-AgentService -Name $LegacyServiceName
+function Remove-PreviousAgentService {
+    param([string]$Name)
+    if ($CustomLayout) { return }
+    if ($ServiceName -eq $Name) { return }
+    if (-not (Test-AgentServiceExists $Name)) { return }
+    Log-Step "Retiring previous service $Name after Lite-Plus-agent is running..."
+    & nssm set $Name AppExit Default Exit 2>&1 | Out-Null
+    Remove-AgentService -Name $Name
 }
+Remove-PreviousAgentService -Name $LiteServiceName
+Remove-PreviousAgentService -Name $LegacyServiceName
 Log-Success "Service $ServiceName installed and started using nssm."
 
-Log-Success "Lite-agent installation completed!"
+Log-Success "Lite-Plus-agent installation completed!"
 Log-Config "Service name: $ServiceName"
 Log-Config "Process: $AgentPath"
 Log-Config "Arguments: $(Redact-AgentArgs $AgentArgs)"

@@ -1,6 +1,6 @@
-# Migrate an existing komari-agent install to Lite-agent.
+# Migrate an existing komari-agent install to Lite-Plus-agent.
 # Keeps the original endpoint, node token, and launch flags, then
-# uninstalls komari-agent after Lite-agent is running.
+# uninstalls komari-agent after Lite-Plus-agent is running.
 
 function Log-Info { param([string]$Message) Write-Host "$Message" -ForegroundColor Cyan }
 function Log-Success { param([string]$Message) Write-Host "$Message" -ForegroundColor Green }
@@ -10,13 +10,13 @@ function Log-Step { param([string]$Message) Write-Host "$Message" -ForegroundCol
 function Log-Config { param([string]$Message) Write-Host "- $Message" -ForegroundColor White }
 
 $LegacyServiceName = "komari-agent"
-$GitHubRepo = "nuomiiiii/Lite-agent"
+$GitHubRepo = "nuomiiiii/Lite-Plus-agent"
 $GitHubProxy = ""
 $InstallVersion = ""
 $EndpointOverride = ""
 $Collected = New-Object System.Collections.Generic.List[string]
 $SourceDirs = New-Object System.Collections.Generic.List[string]
-$InstallDir = Join-Path $Env:ProgramFiles "Lite"
+$InstallDir = Join-Path $Env:ProgramFiles "Lite-Plus"
 $LegacyDir = Join-Path $Env:ProgramFiles "Komari"
 
 if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -58,12 +58,12 @@ for ($i = 0; $i -lt $args.Count; $i++) {
             continue
         }
         "--install-dir" {
-            Log-Error "Migration always uses the default Lite-agent directory and service name."
+            Log-Error "Migration always uses the default Lite-Plus-agent directory and service name."
             Log-Error "Run this script without --install-dir so komari-agent can be uninstalled afterward."
             exit 1
         }
         "--install-service-name" {
-            Log-Error "Migration always uses the default Lite-agent directory and service name."
+            Log-Error "Migration always uses the default Lite-Plus-agent directory and service name."
             exit 1
         }
         "-e" {
@@ -426,9 +426,9 @@ if (-not (Test-HasNamedFlag "config") -and (Test-Path (Join-Path $InstallDir "co
 }
 
 Write-Host "==========================================="
-Write-Host "    Lite Agent Migration Script"
+Write-Host "    Lite-Plus Agent Migration Script"
 Write-Host "==========================================="
-Log-Config "Keeping the original node token and installing Lite-agent"
+Log-Config "Keeping the original node token and installing Lite-Plus-agent"
 Log-Config "Endpoint: $(Get-NamedFlagValue -Name endpoint -Short e)"
 if ($sidecarUuid) { Log-Config "Saved UUID: $sidecarUuid" }
 Log-Config "Arguments: $(Redact-AgentArgs @($Collected))"
@@ -442,8 +442,8 @@ else {
     if ($GitHubProxy) {
         $rawUrl = "$($GitHubProxy.TrimEnd('/'))/https://raw.githubusercontent.com/$GitHubRepo/main/install.ps1"
     }
-    $installer = Join-Path $env:TEMP "lite-agent-install.ps1"
-    Log-Step "Downloading Lite-agent install.ps1..."
+    $installer = Join-Path $env:TEMP "lite-plus-agent-install.ps1"
+    Log-Step "Downloading Lite-Plus-agent install.ps1..."
     try {
         Invoke-WebRequest -Uri $rawUrl -OutFile $installer -UseBasicParsing
     }
@@ -468,7 +468,7 @@ if ($InstallVersion) {
 }
 foreach ($item in @($Collected)) { $installArgs.Add($item) | Out-Null }
 
-Log-Step "Installing Lite-agent with the original node key..."
+Log-Step "Installing Lite-Plus-agent with the original node key..."
 & $installer @($installArgs)
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE

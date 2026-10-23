@@ -1,6 +1,6 @@
 # Workflow Design Notes
 
-This directory contains the GitHub Actions workflows for Lite-agent. Keep this
+This directory contains the GitHub Actions workflows for Lite-Plus-agent. Keep this
 document updated when changing release, snapshot, or Docker publishing behavior.
 
 The important design split is:
@@ -19,16 +19,17 @@ The important design split is:
 | `release.yml` | Published GitHub release | Release binary assets | Skips prereleases |
 | `release-docker.yml` | Published GitHub release, manual dispatch | Stable Docker image tags | Skips prerelease release events |
 | `generate-release-notes.yml` | Published GitHub release, manual dispatch | Generated release notes | Skips prerelease release events |
+| `follow-lite-agent.yml` | Hourly schedule, manual dispatch | Merge a new Lite-agent stable tag, bump `lite_plus_agent` by one patch, publish Plus-agent | Ignores Snapshot / prerelease / draft |
 
 ## Common Build Conventions
 
 Binary names must remain compatible with the updater, installer scripts, and
 Dockerfile:
 
-- Release and snapshot assets are named `Lite-agent-${GOOS}-${GOARCH}`.
+- Release and snapshot assets are named `Lite-Plus-agent-${GOOS}-${GOARCH}`.
 - Windows assets append `.exe`.
 - The Dockerfile expects prebuilt Linux binaries named
-  `Lite-agent-${TARGETOS}-${TARGETARCH}` in the Docker build context.
+  `Lite-Plus-agent-${TARGETOS}-${TARGETARCH}` in the Docker build context.
 
 The agent version and update repository are embedded with:
 
@@ -45,8 +46,11 @@ without repeatedly updating once installed. The agent uses
 Embedding `update.Repo` keeps fork builds on the fork's releases even
 if the source default changes during an upstream merge.
 
-Prefer `go-version-file: go.mod` for release-producing workflows so Actions uses
-the Go version declared by the project.
+Build, snapshot, stable release, and Docker publishing all install Go `1.26.10`
+explicitly. Do not use `go-version-file: go.mod`, do not set `check-latest: true`,
+and do not let Actions pick a newer or older toolchain. After setup, confirm
+`go env GOVERSION` is `go1.26.10` and set `GOTOOLCHAIN=local`. Keep `go.mod`
+on `go 1.26.10` with `toolchain go1.26.10`.
 
 ## `build.yml`
 
@@ -106,7 +110,7 @@ Binary release job:
 - Builds the same OS/architecture matrix as the normal release workflow.
 - Uploads all binaries as workflow artifacts.
 - Creates a GitHub release with `--prerelease`.
-- Uploads all `Lite-agent-*` artifacts to that prerelease.
+- Uploads all `Lite-Plus-agent-*` artifacts to that prerelease.
 
 Snapshot retention:
 
@@ -148,9 +152,11 @@ Container-based updates and binary self-updates are different mechanisms:
 - The agent's own self-update logic updates the binary inside the running
   container filesystem. That does not update the Docker image. If the container
   is recreated, the image contents win again.
-- The Dockerfile creates `/.lite-agent-container` and keeps `/.komari-agent-container` for agents upgraded from komari-agent. Snapshot-aware auto-update
-  uses that marker to skip binary self-update in containers and leave updates to
-  image refresh tooling.
+- The Dockerfile creates `/.lite-plus-agent-container` and keeps
+  `/.lite-agent-container` and `/.komari-agent-container` for agents upgraded
+  from Lite-agent or komari-agent. Snapshot-aware auto-update uses that marker
+  to skip binary self-update in containers and leave updates to image refresh
+  tooling.
 
 For Docker prerelease users, prefer `:snapshot` plus a container image updater.
 For non-container prerelease users, snapshot-aware binary self-update follows
@@ -245,7 +251,8 @@ Snapshot auto-update behavior:
   asset name.
 - Snapshot agents update only to another snapshot prerelease.
 - Snapshot agents running in Docker skip binary self-update when
-  `/.lite-agent-container` or `/.komari-agent-container` exists.
+  `/.lite-plus-agent-container`, `/.lite-agent-container`, or
+  `/.komari-agent-container` exists.
 
 The Docker image tag is not used as the binary version source. The Docker tag is
 always `snapshot` by design. Snapshot binary update decisions use the embedded
@@ -262,6 +269,45 @@ Container guidance for future update changes:
   replacement.
 - Prefer image-level updates for Docker deployments.
 
+## `follow-lite-agent.yml`
+
+Purpose: when Lite-agent publishes a new stable four-part tag, merge it and
+ship Plus-agent with the last segment increased by one (`0.0.0.1` → `0.0.0.2`).
+
+Trigger:
+
+- Hourly cron on `main`.
+- Manual `workflow_dispatch`, optionally with `lite_agent_tag`.
+
+It does not follow Snapshot, prerelease, or draft releases. If
+`plus-baseline.json` `lite_agent` already equals that tag, it exits. Merge
+conflicts open `follow/lite-agent-<tag>` and a PR; no tag is created.
+
+After a successful merge it keeps Xray / sing-box requires, rewrites
+`update.CurrentVersion` and `update.Repo`, writes only `lite_plus_agent` +
+`lite_agent` into `plus-baseline.json`, runs `go test -tags with_quic,with_utls ./...`,
+then tags and publishes a Plus-agent GitHub Release. Binary assets are uploaded
+by this workflow so the follow still ships if `GITHUB_TOKEN` cannot start
+`release.yml`. Set repository secret `PLUS_FOLLOW_TOKEN` (contents + workflow
+scope) so the follow job can also dispatch `release-docker.yml`.
+
+## `plus-baseline.json`
+
+This file is for `follow-lite-agent.yml` only. The running agent does not read it.
+
+Keep exactly two keys:
+
+- `lite_plus_agent`: this repo's current Plus-agent version
+- `lite_agent`: the Lite-agent tag already merged
+
+Do not add `plus`, `lite`, `lite_web`, or `lite_theme`. Do not copy the
+controller/web five-field schema into this repo.
+
+When shipping an Agent-only Plus change, bump `lite_plus_agent` to match
+`update.CurrentVersion` and leave `lite_agent` unchanged. When following a
+Lite-agent stable tag, set `lite_agent` to that tag and bump
+`lite_plus_agent` by one patch.
+
 ## Change Checklist
 
 Before changing these workflows, check:
@@ -275,4 +321,7 @@ Before changing these workflows, check:
   publish `latest` for snapshots.
 - Binary asset names still match updater, installer, and Dockerfile expectations.
 - `update.CurrentVersion` is still embedded in all release-producing binaries.
+- `plus-baseline.json` still has only `lite_plus_agent` and `lite_agent`.
+- `follow-lite-agent.yml` still bumps only the fourth Plus-agent segment and
+  still refuses extra baseline keys.
 - Race protection still prevents stale `main` commits from publishing snapshots.

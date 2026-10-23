@@ -64,12 +64,13 @@ redact_agent_args() {
 }
 
 # Default values
-service_name="lite-agent"
-target_dir="/opt/lite-agent"
+service_name="lite-plus-agent"
+target_dir="/opt/lite-plus-agent"
 github_proxy=""
 install_version="" # New parameter for specifying version
+lite_service_name="lite-agent"
 legacy_service_name="komari-agent"
-github_repo="nuomiiiii/Lite-agent"
+github_repo="nuomiiiii/Lite-Plus-agent"
 custom_layout=false
 
  
@@ -79,10 +80,10 @@ os_type=$(uname -s)
 case $os_type in
     Darwin)
         os_name="darwin"
-        target_dir="/usr/local/lite-agent"  # Use /usr/local on macOS
+        target_dir="/usr/local/lite-plus-agent"  # Use /usr/local on macOS
         # Check if we can write to /usr/local, fallback to user directory
         if [ ! -w "/usr/local" ] && [ "$EUID" -ne 0 ]; then
-            target_dir="$HOME/.lite-agent"
+            target_dir="$HOME/.lite-plus-agent"
             log_info "No write permission to /usr/local, using user directory: $target_dir"
         fi
         ;;
@@ -94,7 +95,7 @@ case $os_type in
         ;;
     MINGW*|MSYS*|CYGWIN*)
         os_name="windows"
-        target_dir="/c/lite-agent"  # Use C:\lite-agent on Windows
+        target_dir="/c/lite-plus-agent"  # Use C:\lite-plus-agent on Windows
         ;;
     *)
         log_error "Unsupported operating system: $os_type"
@@ -202,8 +203,10 @@ managed_service_unit_exists() {
     [ -f "/etc/init.d/${name}" ] && return 0
     [ -f "/etc/init/${name}.conf" ] && return 0
     if [ "$os_name" = "darwin" ]; then
+        [ -f "/Library/LaunchDaemons/com.liteplus.${name}.plist" ] && return 0
         [ -f "/Library/LaunchDaemons/com.lite.${name}.plist" ] && return 0
         [ -f "/Library/LaunchDaemons/com.komari.${name}.plist" ] && return 0
+        [ -f "$HOME/Library/LaunchAgents/com.liteplus.${name}.plist" ] && return 0
         [ -f "$HOME/Library/LaunchAgents/com.lite.${name}.plist" ] && return 0
         [ -f "$HOME/Library/LaunchAgents/com.komari.${name}.plist" ] && return 0
     fi
@@ -302,9 +305,15 @@ read_existing_managed_service_args() {
         read_service_args_from_unit "$service_name" || true
         return 0
     fi
-    if [ "$custom_layout" != true ] && managed_service_unit_exists "$legacy_service_name"; then
-        read_service_args_from_unit "$legacy_service_name" || true
-        return 0
+    if [ "$custom_layout" != true ]; then
+        if managed_service_unit_exists "$lite_service_name"; then
+            read_service_args_from_unit "$lite_service_name" || true
+            return 0
+        fi
+        if managed_service_unit_exists "$legacy_service_name"; then
+            read_service_args_from_unit "$legacy_service_name" || true
+            return 0
+        fi
     fi
     return 1
 }
@@ -357,7 +366,7 @@ apply_remote_control_install_args() {
 apply_remote_control_install_args
 
 
-agent_path="${target_dir}/Lite-agent"
+agent_path="${target_dir}/Lite-Plus-agent"
 if [ "$os_name" = "darwin" ] && command -v brew >/dev/null 2>&1; then
     # On macOS with Homebrew, we can run without root for dependencies
     require_root_for_deps=false
@@ -371,7 +380,7 @@ if [ "$EUID" -ne 0 ] && [ "$require_root_for_deps" = true ]; then
 fi
 
 echo -e "${WHITE}===========================================${NC}"
-echo -e "${WHITE}    Lite Agent Installation Script     ${NC}"
+echo -e "${WHITE}    Lite-Plus Agent Installation Script     ${NC}"
 echo -e "${WHITE}===========================================${NC}"
 echo ""
 log_config "Installation configuration:"
@@ -433,7 +442,7 @@ uninstall_named_service() {
         initctl stop ${name}
         rm -f "/etc/init/${name}.conf"
     elif [ "$os_name" = "darwin" ] && command -v launchctl >/dev/null 2>&1; then
-        for prefix in com.lite com.komari; do
+        for prefix in com.liteplus com.lite com.komari; do
             system_plist="/Library/LaunchDaemons/${prefix}.${name}.plist"
             user_plist="$HOME/Library/LaunchAgents/${prefix}.${name}.plist"
             if [ -f "$system_plist" ]; then
@@ -488,6 +497,8 @@ new_service_running() {
         return $?
     fi
     if [ "$os_name" = "darwin" ] && command -v launchctl >/dev/null 2>&1; then
+        launchctl print "system/com.liteplus.${service_name}" >/dev/null 2>&1 && return 0
+        launchctl print "gui/$(id -u)/com.liteplus.${service_name}" >/dev/null 2>&1 && return 0
         launchctl print "system/com.lite.${service_name}" >/dev/null 2>&1 && return 0
         launchctl print "gui/$(id -u)/com.lite.${service_name}" >/dev/null 2>&1 && return 0
         return 1
@@ -511,11 +522,13 @@ wait_new_service() {
 }
 
 legacy_install_detected() {
-    if managed_service_unit_exists "$legacy_service_name"; then
+    if managed_service_unit_exists "$lite_service_name" || managed_service_unit_exists "$legacy_service_name"; then
         return 0
     fi
     local src
-    for src in "/opt/komari" "/usr/local/komari" "$HOME/.komari" "/c/komari"; do
+    for src in \
+        "/opt/lite-agent" "/usr/local/lite-agent" "$HOME/.lite-agent" "/c/lite-agent" \
+        "/opt/komari" "/usr/local/komari" "$HOME/.komari" "/c/komari"; do
         if [ -d "$src" ] && [ "$src" != "$target_dir" ]; then
             return 0
         fi
@@ -523,32 +536,42 @@ legacy_install_detected() {
     return 1
 }
 
-retire_legacy_service() {
+retire_named_previous_service() {
+    local name="$1"
     if [ "$custom_layout" = true ]; then
         return
     fi
-    if [ "$service_name" = "$legacy_service_name" ]; then
+    if [ "$service_name" = "$name" ]; then
         return
     fi
-    if ! managed_service_unit_exists "$legacy_service_name"; then
+    if ! managed_service_unit_exists "$name"; then
         return
     fi
-    log_step "Retiring legacy service ${legacy_service_name} after Lite-agent is running..."
-    prevent_service_restart "$legacy_service_name"
-    uninstall_named_service "$legacy_service_name"
+    log_step "Retiring previous service ${name} after Lite-Plus-agent is running..."
+    prevent_service_restart "$name"
+    uninstall_named_service "$name"
 }
 
-# Keep an existing komari-agent process running until Lite-agent is up.
-# Nothing is printed when no komari-agent service or directory is present.
+retire_legacy_service() {
+    retire_named_previous_service "$lite_service_name"
+    retire_named_previous_service "$legacy_service_name"
+}
+
+# Keep existing komari-agent / lite-agent processes running until Plus is up.
+# Nothing is printed when no previous service or directory is present.
 # Custom --install-dir / --install-service-name installs do not migrate default paths.
 if [ "$custom_layout" != true ]; then
+    copy_sidecars_from "/opt/lite-agent"
+    copy_sidecars_from "/usr/local/lite-agent"
+    copy_sidecars_from "$HOME/.lite-agent"
+    copy_sidecars_from "/c/lite-agent"
     copy_sidecars_from "/opt/komari"
     copy_sidecars_from "/usr/local/komari"
     copy_sidecars_from "$HOME/.komari"
     copy_sidecars_from "/c/komari"
 else
     if legacy_install_detected; then
-        log_step "Custom install layout; leaving komari-agent in place."
+        log_step "Custom install layout; leaving lite-agent and komari-agent in place."
     fi
     uninstall_named_service "$service_name"
 fi
@@ -656,7 +679,7 @@ else
 fi
 
 # Construct download URL
-file_name="Lite-agent-${os_name}-${arch}"
+file_name="Lite-Plus-agent-${os_name}-${arch}"
 if [ "$version_to_install" = "latest" ]; then
     download_path="latest/download"
 else
@@ -677,7 +700,7 @@ log_step "Creating installation directory: ${GREEN}$target_dir${NC}"
 mkdir -p "$target_dir"
 
 # curl -o cannot overwrite a running executable (ETXTBSY / "Text file busy").
-# Write a new inode, then replace the name so a live Lite-agent can keep running
+# Write a new inode, then replace the name so a live Lite-Plus-agent can keep running
 # until the service is restarted.
 download_path_tmp="${agent_path}.new"
 rm -f "$download_path_tmp"
@@ -694,7 +717,7 @@ for candidate in \
         log_step "Downloading $name directly..."
     fi
     log_info "URL: ${CYAN}$download_url${NC}"
-    if curl --fail --show-error -L -A "Lite-agent-install (+https://github.com/nuomiiiii/Lite-agent)" -o "$download_path_tmp" "$download_url"; then
+    if curl --fail --show-error -L -A "Lite-Plus-agent-install (+https://github.com/nuomiiiii/Lite-Plus-agent)" -o "$download_path_tmp" "$download_url"; then
         download_ok=true
         break
     fi
@@ -713,7 +736,7 @@ if ! mv -f "$download_path_tmp" "$agent_path"; then
     rm -f "$download_path_tmp"
     exit 1
 fi
-log_success "Lite-agent installed to ${GREEN}$agent_path${NC}"
+log_success "Lite-Plus-agent installed to ${GREEN}$agent_path${NC}"
 
 # Detect init system and configure service
 log_step "Configuring system service..."
@@ -816,7 +839,7 @@ if [ "$init_system" = "nixos" ]; then
     log_info "Please add the following to your NixOS configuration:"
     echo ""
     echo -e "${CYAN}systemd.services.${service_name} = {${NC}"
-    echo -e "${CYAN}  description = \"Lite Agent Service\";${NC}"
+    echo -e "${CYAN}  description = \"Lite-Plus Agent Service\";${NC}"
     echo -e "${CYAN}  after = [ \"network.target\" ];${NC}"
     echo -e "${CYAN}  wantedBy = [ \"multi-user.target\" ];${NC}"
     echo -e "${CYAN}  serviceConfig = {${NC}"
@@ -837,7 +860,7 @@ elif [ "$init_system" = "openrc" ]; then
     cat > "$service_file" << EOF
 #!/sbin/openrc-run
 
-name="Lite Agent Service"
+name="Lite-Plus Agent Service"
 description="Lite monitoring agent"
 command="${agent_path}"
 command_args="${agent_args}"
@@ -864,7 +887,7 @@ elif [ "$init_system" = "systemd" ]; then
     service_file="/etc/systemd/system/${service_name}.service"
     cat > "$service_file" << EOF
 [Unit]
-Description=Lite Agent Service
+Description=Lite-Plus Agent Service
 After=network.target
 
 [Service]
@@ -931,7 +954,7 @@ elif [ "$init_system" = "launchd" ]; then
     if [[ "$target_dir" =~ ^/Users/.* ]] || [ "$EUID" -ne 0 ]; then
         # User-level service (LaunchAgent)
         plist_dir="$HOME/Library/LaunchAgents"
-        plist_file="$plist_dir/com.lite.${service_name}.plist"
+        plist_file="$plist_dir/com.liteplus.${service_name}.plist"
         log_info "Installing as user-level service (LaunchAgent)"
         mkdir -p "$plist_dir"
         service_user="$(whoami)"
@@ -939,7 +962,7 @@ elif [ "$init_system" = "launchd" ]; then
     else
         # System-level service (LaunchDaemon)
         plist_dir="/Library/LaunchDaemons"
-        plist_file="$plist_dir/com.lite.${service_name}.plist"
+        plist_file="$plist_dir/com.liteplus.${service_name}.plist"
         log_info "Installing as system-level service (LaunchDaemon)"
         service_user="root"
         log_dir="/var/log"
@@ -952,7 +975,7 @@ elif [ "$init_system" = "launchd" ]; then
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.lite.${service_name}</string>
+    <string>com.liteplus.${service_name}</string>
     <key>ProgramArguments</key>
     <array>
         <string>${agent_path}</string>
@@ -1004,8 +1027,8 @@ elif [ "$init_system" = "upstart" ]; then
     log_info "Using upstart for service management"
     service_file="/etc/init/${service_name}.conf"
     cat > "$service_file" << EOF
-# Lite Agent
-description "Lite Agent Service"
+# Lite-Plus Agent
+description "Lite-Plus Agent Service"
 
 chdir ${target_dir}
 start on filesystem or runlevel [2345]
@@ -1038,10 +1061,10 @@ fi
 
 if [ "$init_system" != "nixos" ]; then
     if ! wait_new_service; then
-        if managed_service_unit_exists "$legacy_service_name"; then
-            log_error "Lite-agent service ${service_name} did not become running; leaving komari-agent in place"
+        if managed_service_unit_exists "$lite_service_name" || managed_service_unit_exists "$legacy_service_name"; then
+            log_error "Lite-Plus-agent service ${service_name} did not become running; leaving previous agents in place"
         else
-            log_error "Lite-agent service ${service_name} did not become running"
+            log_error "Lite-Plus-agent service ${service_name} did not become running"
         fi
         exit 1
     fi
@@ -1051,11 +1074,11 @@ fi
 echo ""
 echo -e "${WHITE}===========================================${NC}"
 if [ -f /etc/NIXOS ]; then
-    log_success "Lite-agent binary installed!"
+    log_success "Lite-Plus-agent binary installed!"
     log_warning "NixOS requires declarative service configuration."
     log_info "Please add the service configuration to your NixOS config and rebuild."
 else
-    log_success "Lite-agent installation completed!"
+    log_success "Lite-Plus-agent installation completed!"
 fi
 log_config "Service: ${GREEN}$service_name${NC}"
 log_config "Process: ${GREEN}$agent_path${NC}"

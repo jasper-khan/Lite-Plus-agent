@@ -79,11 +79,11 @@ func TestCurrentRuntimeConfigParamsReportsEveryRuntimeField(t *testing.T) {
 		MonthRotateTime:     "12:38:12",
 		MonthRotateTimezone: "UTC",
 		Interval:            18,
-		IncludeNics:        "eth0",
-		ExcludeNics:        "lo",
-		IncludeMountpoints: "/;/data",
-		MemoryIncludeCache: true,
-		EnableGPU:          true,
+		IncludeNics:         "eth0",
+		ExcludeNics:         "lo",
+		IncludeMountpoints:  "/;/data",
+		MemoryIncludeCache:  true,
+		EnableGPU:           true,
 	})
 
 	got := currentRuntimeConfigParams()

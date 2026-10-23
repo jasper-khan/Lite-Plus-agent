@@ -39,7 +39,7 @@ func quoteUnitArg(value string) string {
 
 func systemdUnit(next spec) string {
 	var b strings.Builder
-	b.WriteString("[Unit]\nDescription=Lite Agent Service\nAfter=network.target\n\n[Service]\nType=simple\n")
+	b.WriteString("[Unit]\nDescription=Lite-Plus Agent Service\nAfter=network.target\n\n[Service]\nType=simple\n")
 	b.WriteString("ExecStart=" + quoteUnitArg(next.Binary))
 	for _, arg := range next.Args {
 		b.WriteString(" " + quoteUnitArg(arg))

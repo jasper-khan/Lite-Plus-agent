@@ -541,6 +541,12 @@ func processV2Event(conn *ws.SafeConn, method string, params interface{}, eventI
 			return false
 		}
 		return processRuntimeConfig(p, eventID)
+	case v2.MethodNodemgtControl:
+		if nodemgtrt := nodemgtRuntimeHandle(); nodemgtrt != nil {
+			return nodemgtrt(params, eventID)
+		}
+		log.Printf("nodemgt.control received before runtime start")
+		return true
 	case v2.MethodAgentMessage, v2.MethodAgentEvent:
 		log.Printf("received v2 %s: %+v", method, params)
 		return true

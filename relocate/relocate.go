@@ -53,7 +53,7 @@ func RelocateIfNeeded() (bool, error) {
 		return false, err
 	}
 	if leftoverErr := retireLeftoverLegacy(runtime.GOOS, ctrl); leftoverErr != nil {
-		log.Println("failed to retire leftover komari-agent:", leftoverErr)
+		log.Println("failed to retire leftover komari-agent or lite-agent:", leftoverErr)
 	}
 	return relocated, nil
 }
@@ -196,12 +196,21 @@ func retireLeftoverLegacy(goos string, ctrl controller) error {
 	if !found && !onModernLayout(goos, executable, currentHome(), currentProgramFiles()) {
 		return nil
 	}
-	if !ctrl.LegacyServiceExists(legacyServiceName) {
-		return nil
+	var last error
+	for _, name := range leftoverServiceNames() {
+		if name == newServiceName {
+			continue
+		}
+		if !ctrl.LegacyServiceExists(name) {
+			continue
+		}
+		log.Printf("retiring leftover %s now that Lite-Plus-agent is running", name)
+		_ = ctrl.PreventRestart(name)
+		if err := ctrl.StopDisableRemove(name); err != nil {
+			last = err
+		}
 	}
-	log.Printf("retiring leftover %s now that Lite-agent is running", legacyServiceName)
-	_ = ctrl.PreventRestart(legacyServiceName)
-	return ctrl.StopDisableRemove(legacyServiceName)
+	return last
 }
 
 func rewriteEnvFiles(files []string, oldDir, newDir, goos string) []string {

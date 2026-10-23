@@ -42,7 +42,7 @@ func TestFlushCacheDoesNotAttributePreResetTrafficToNewCycle(t *testing.T) {
 	mu.Lock()
 	store = NetStatic{Interfaces: map[string][]TrafficData{}}
 	staticCache = map[string][]TrafficData{}
-	config = configOrDefault(NetStaticConfig{})
+	config = configOrDefault(NetStaticConfig{DataPreserveDay: 400})
 	mu.Unlock()
 
 	SetResetClock(15, "12:38:12", "UTC")

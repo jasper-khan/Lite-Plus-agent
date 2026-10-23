@@ -35,9 +35,9 @@ import (
 var flags = pkg_flags.GlobalConfig
 
 var RootCmd = &cobra.Command{
-	Use:   "Lite-agent",
-	Short: "Lite agent",
-	Long:  `Lite agent`,
+	Use:   "Lite-Plus-agent",
+	Short: "Lite-Plus agent",
+	Long:  `Lite-Plus agent`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := loadEffectiveConfig(cmd, flags); err != nil {
 			return err
@@ -55,7 +55,7 @@ var RootCmd = &cobra.Command{
 		if relocated, err := relocate.RelocateIfNeeded(); err != nil {
 			log.Println("layout relocation failed; continuing on the current path:", err)
 		} else if relocated {
-			log.Println("layout relocation handed off to Lite-agent")
+			log.Println("layout relocation handed off to Lite-Plus-agent")
 			os.Exit(0)
 		}
 		if taskLog, err := tasklog.Open(tasklog.PathForConfig(flags.ConfigFile)); err != nil {
@@ -68,11 +68,11 @@ var RootCmd = &cobra.Command{
 			MonthRotateTime:     flags.MonthRotateTime,
 			MonthRotateTimezone: flags.MonthRotateTimezone,
 			Interval:            flags.Interval,
-			IncludeNics:        flags.IncludeNics,
-			ExcludeNics:        flags.ExcludeNics,
-			IncludeMountpoints: flags.IncludeMountpoints,
-			MemoryIncludeCache: flags.MemoryIncludeCache,
-			EnableGPU:          flags.EnableGPU,
+			IncludeNics:         flags.IncludeNics,
+			ExcludeNics:         flags.ExcludeNics,
+			IncludeMountpoints:  flags.IncludeMountpoints,
+			MemoryIncludeCache:  flags.MemoryIncludeCache,
+			EnableGPU:           flags.EnableGPU,
 		})
 		// 捕获中止信号，优雅退出
 		stopCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -104,7 +104,7 @@ var RootCmd = &cobra.Command{
 			}
 		}
 
-		log.Println("Lite Agent", update.CurrentVersion)
+		log.Println("Lite-Plus Agent", update.CurrentVersion)
 		log.Println("Github Repo:", update.Repo)
 
 		// 设置 DNS 解析行为
@@ -117,6 +117,7 @@ var RootCmd = &cobra.Command{
 		}
 
 		server.StartTaskRecovery(recoverCtx)
+		server.StartNodemgtRuntime(flags.ConfigFile)
 		diskList, err := monitoring.DiskList()
 		if err != nil {
 			log.Println("Failed to get disk list:", err)
@@ -367,7 +368,7 @@ func init() {
 	RootCmd.PersistentFlags().StringVar(&flags.AutoDiscoveryKey, "auto-discovery", "", "Legacy marker to read auto-discovery.json; registration is no longer available")
 	_ = RootCmd.PersistentFlags().MarkHidden("auto-discovery")
 	_ = RootCmd.PersistentFlags().MarkDeprecated("auto-discovery", "registration is no longer available; existing installs read auto-discovery.json")
-	RootCmd.PersistentFlags().BoolVar(&flags.DisableAutoUpdate, "disable-auto-update", false, "Disable automatic updates")
+	RootCmd.PersistentFlags().BoolVar(&flags.DisableAutoUpdate, "disable-auto-update", true, "Disable automatic updates")
 	RootCmd.PersistentFlags().BoolVar(&flags.RemoteControlEnabled, "enable-remote-control", false, "Enable remote control (terminal, files, exec, and MCP)")
 	RootCmd.PersistentFlags().BoolVar(&flags.DisableWebSsh, "disable-web-ssh", false, "Deprecated; use --enable-remote-control")
 	_ = RootCmd.PersistentFlags().MarkHidden("disable-web-ssh")

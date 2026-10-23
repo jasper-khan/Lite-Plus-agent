@@ -14,8 +14,37 @@ import (
 )
 
 func TestDefaultUpdateRepo(t *testing.T) {
-	if Repo != "nuomiiiii/Lite-agent" {
-		t.Fatalf("Repo = %q, want %q", Repo, "nuomiiiii/Lite-agent")
+	if CurrentVersion != "0.0.0.1" {
+		t.Fatalf("CurrentVersion = %q, want 0.0.0.1", CurrentVersion)
+	}
+	if Repo != "nuomiiiii/Lite-Plus-agent" {
+		t.Fatalf("Repo = %q, want nuomiiiii/Lite-Plus-agent", Repo)
+	}
+}
+
+func TestUpdateChannelRejectsLiteRepos(t *testing.T) {
+	previous := Repo
+	t.Cleanup(func() { Repo = previous })
+	Repo = ""
+	if updateChannelConfigured() {
+		t.Fatal("empty Repo must not count as a Plus channel")
+	}
+	Repo = "nuomiiiii/Lite-agent"
+	if updateChannelConfigured() {
+		t.Fatal("Lite-agent must not count as a Plus channel")
+	}
+	Repo = "acme/lite-plus-agent"
+	if !updateChannelConfigured() {
+		t.Fatal("an independent Plus repo should be accepted")
+	}
+}
+
+func TestCheckAndUpdateSkipsUnconfiguredChannel(t *testing.T) {
+	previous := Repo
+	t.Cleanup(func() { Repo = previous })
+	Repo = ""
+	if err := CheckAndUpdate(); err != nil {
+		t.Fatalf("CheckAndUpdate() error = %v", err)
 	}
 }
 
@@ -51,6 +80,26 @@ func TestParseVersion(t *testing.T) {
 				t.Errorf("parseVersion(%q) = %q, want %q", tt.input, got.String(), tt.want)
 			}
 		}
+	}
+}
+
+func TestBumpPatch(t *testing.T) {
+	got, err := BumpPatch("0.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "0.0.0.2" {
+		t.Fatalf("BumpPatch(0.0.0.1) = %q, want 0.0.0.2", got)
+	}
+	got, err = BumpPatch("0.0.0.1+abc1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "0.0.0.2" {
+		t.Fatalf("BumpPatch(0.0.0.1+abc1234) = %q, want 0.0.0.2", got)
+	}
+	if _, err := BumpPatch("1.2.3"); err == nil {
+		t.Fatal("BumpPatch(1.2.3) expected error for three-part version")
 	}
 }
 
@@ -123,6 +172,12 @@ func TestNeedUpdate(t *testing.T) {
 		{"2.3.6.2+abc1234", "2.3.6.2", false},
 		{"2.3.6.2", "2.3.6.3", true},
 		{"2.3.6.3+abc1234", "2.3.6.3", false},
+		{"2.3.6.3", "2.3.6.4", true},
+		{"2.3.6.4+abc1234", "2.3.6.4", false},
+		{"2.3.6.4", "2.3.10.0", true},
+		{"2.3.10.0+abc1234", "2.3.10.0", false},
+		{"0.0.0.1", "0.0.0.2", true},
+		{"0.0.0.1+abc1234", "0.0.0.1", false},
 	}
 
 	for _, tt := range tests {
@@ -171,9 +226,9 @@ func TestExpectedAssetName(t *testing.T) {
 		goarch string
 		want   string
 	}{
-		{"linux", "amd64", "Lite-agent-linux-amd64"},
-		{"darwin", "arm64", "Lite-agent-darwin-arm64"},
-		{"windows", "amd64", "Lite-agent-windows-amd64.exe"},
+		{"linux", "amd64", "Lite-Plus-agent-linux-amd64"},
+		{"darwin", "arm64", "Lite-Plus-agent-darwin-arm64"},
+		{"windows", "amd64", "Lite-Plus-agent-windows-amd64.exe"},
 	}
 
 	for _, tt := range tests {
@@ -185,13 +240,13 @@ func TestExpectedAssetName(t *testing.T) {
 }
 
 func TestFindReleaseAssetUsesLiteAgentName(t *testing.T) {
-	release := testRelease("2.3.0.0", false, false, time.Now(), "Lite-agent-linux-amd64")
+	release := testRelease("2.3.0.0", false, false, time.Now(), "Lite-Plus-agent-linux-amd64")
 	asset, ok := findReleaseAsset(release, expectedAssetNames("linux", "amd64")...)
 	if !ok {
 		t.Fatal("findReleaseAsset() found no candidate")
 	}
-	if asset.Name != "Lite-agent-linux-amd64" {
-		t.Fatalf("findReleaseAsset() = %q, want Lite-agent-linux-amd64", asset.Name)
+	if asset.Name != "Lite-Plus-agent-linux-amd64" {
+		t.Fatalf("findReleaseAsset() = %q, want Lite-Plus-agent-linux-amd64", asset.Name)
 	}
 }
 
@@ -203,14 +258,14 @@ func TestFindReleaseAssetIgnoresKomariAgentName(t *testing.T) {
 }
 
 func TestSelectLatestSnapshotRelease(t *testing.T) {
-	assetName := "Lite-agent-linux-amd64"
+	assetName := "Lite-Plus-agent-linux-amd64"
 	base := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
 
 	releases := []githubRelease{
 		testRelease("v9.9.9", false, false, base.Add(5*time.Hour), assetName),
 		testRelease("Snapshot-2607061400", true, true, base.Add(4*time.Hour), assetName),
 		testRelease("beta-2607061500", true, false, base.Add(6*time.Hour), assetName),
-		testRelease("Snapshot-2607061600", true, false, base.Add(7*time.Hour), "Lite-agent-linux-arm64"),
+		testRelease("Snapshot-2607061600", true, false, base.Add(7*time.Hour), "Lite-Plus-agent-linux-arm64"),
 		testRelease("Snapshot-2607061200", true, false, base, assetName),
 		testRelease("Snapshot-2607061300", true, false, base.Add(time.Hour), assetName),
 	}
@@ -228,7 +283,7 @@ func TestSelectLatestSnapshotRelease(t *testing.T) {
 }
 
 func TestSelectLatestSnapshotReleaseTieBreaksByTag(t *testing.T) {
-	assetName := "Lite-agent-linux-amd64"
+	assetName := "Lite-Plus-agent-linux-amd64"
 	publishedAt := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
 
 	releases := []githubRelease{
@@ -247,18 +302,18 @@ func TestSelectLatestSnapshotReleaseTieBreaksByTag(t *testing.T) {
 
 func TestSelectLatestSnapshotReleaseNoMatch(t *testing.T) {
 	releases := []githubRelease{
-		testRelease("v1.2.3", false, false, time.Now(), "Lite-agent-linux-amd64"),
-		testRelease("Snapshot-2607061200", true, true, time.Now(), "Lite-agent-linux-amd64"),
-		testRelease("Snapshot-2607061300", true, false, time.Now(), "Lite-agent-linux-arm64"),
+		testRelease("v1.2.3", false, false, time.Now(), "Lite-Plus-agent-linux-amd64"),
+		testRelease("Snapshot-2607061200", true, true, time.Now(), "Lite-Plus-agent-linux-amd64"),
+		testRelease("Snapshot-2607061300", true, false, time.Now(), "Lite-Plus-agent-linux-arm64"),
 	}
 
-	if got, ok := selectLatestSnapshotRelease(releases, "Lite-agent-linux-amd64"); ok {
+	if got, ok := selectLatestSnapshotRelease(releases, "Lite-Plus-agent-linux-amd64"); ok {
 		t.Fatalf("selectLatestSnapshotRelease() = %+v, want no candidate", got)
 	}
 }
 
 func TestSelectLatestStableRelease(t *testing.T) {
-	assetName := "Lite-agent-linux-amd64"
+	assetName := "Lite-Plus-agent-linux-amd64"
 	base := time.Date(2026, 7, 24, 0, 0, 0, 0, time.UTC)
 	releases := []githubRelease{
 		testRelease("2.1.6", false, false, base, assetName),
@@ -281,11 +336,11 @@ func TestSelectLatestStableRelease(t *testing.T) {
 }
 
 func TestSelectLatestStableReleaseWaitsForNewestAsset(t *testing.T) {
-	assetName := "Lite-agent-linux-amd64"
+	assetName := "Lite-Plus-agent-linux-amd64"
 	base := time.Date(2026, 7, 24, 0, 0, 0, 0, time.UTC)
 	releases := []githubRelease{
 		testRelease("2.1.6", false, false, base, assetName),
-		testRelease("2.1.61", false, false, base.Add(time.Hour), "Lite-agent-linux-arm64"),
+		testRelease("2.1.61", false, false, base.Add(time.Hour), "Lite-Plus-agent-linux-arm64"),
 	}
 
 	got, ok := selectLatestStableRelease(releases, assetName)
@@ -298,7 +353,7 @@ func TestSelectLatestStableReleaseWaitsForNewestAsset(t *testing.T) {
 }
 
 func TestSelectLatestStableReleaseUsesRevisionOrder(t *testing.T) {
-	assetName := "Lite-agent-linux-amd64"
+	assetName := "Lite-Plus-agent-linux-amd64"
 	base := time.Date(2026, 7, 27, 0, 0, 0, 0, time.UTC)
 	releases := []githubRelease{
 		testRelease("2.1.62", false, false, base.Add(3*time.Hour), assetName),
@@ -317,7 +372,7 @@ func TestSelectLatestStableReleaseUsesRevisionOrder(t *testing.T) {
 }
 
 func TestSelectLatestStableReleaseSupportsFourPartVersions(t *testing.T) {
-	assetName := "Lite-agent-linux-amd64"
+	assetName := "Lite-Plus-agent-linux-amd64"
 	base := time.Date(2026, 7, 29, 0, 0, 0, 0, time.UTC)
 	releases := []githubRelease{
 		testRelease("2.1.11", false, false, base.Add(4*time.Hour), assetName),
@@ -394,7 +449,7 @@ func testRelease(tag string, prerelease, draft bool, publishedAt time.Time, asse
 
 func TestReplaceAgentBinaryPersistsRemoteControlBeforeUpdate(t *testing.T) {
 	dir := t.TempDir()
-	exe := filepath.Join(dir, "Lite-agent")
+	exe := filepath.Join(dir, "Lite-Plus-agent")
 	if err := os.WriteFile(exe, []byte("old"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +493,7 @@ func TestReplaceAgentBinarySkipsUpdateWhenPersistFails(t *testing.T) {
 		updated = true
 		return nil
 	}
-	if err := replaceAgentBinary(nil, &selfupdate.Release{}, "Lite-agent"); err == nil {
+	if err := replaceAgentBinary(nil, &selfupdate.Release{}, "Lite-Plus-agent"); err == nil {
 		t.Fatal("expected persist failure")
 	}
 	if updated {

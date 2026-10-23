@@ -72,7 +72,7 @@ func (unixController) Install(next spec) error {
 		return run("systemctl", "enable", next.Name+".service")
 	}
 	if commandExists("rc-service") {
-		body := "#!/sbin/openrc-run\n\nname=\"Lite Agent Service\"\ncommand=\"" + next.Binary + "\"\ncommand_args=\"" + strings.Join(next.Args, " ") + "\"\ncommand_user=\"root\"\ndirectory=\"" + next.WorkDir + "\"\npidfile=\"/run/" + next.Name + ".pid\"\nretry=\"SIGTERM/30\"\nsupervisor=supervise-daemon\n"
+		body := "#!/sbin/openrc-run\n\nname=\"Lite-Plus Agent Service\"\ncommand=\"" + next.Binary + "\"\ncommand_args=\"" + strings.Join(next.Args, " ") + "\"\ncommand_user=\"root\"\ndirectory=\"" + next.WorkDir + "\"\npidfile=\"/run/" + next.Name + ".pid\"\nretry=\"SIGTERM/30\"\nsupervisor=supervise-daemon\n"
 		path := "/etc/init.d/" + next.Name
 		if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
 			return err
@@ -88,7 +88,7 @@ func (unixController) Install(next spec) error {
 		return run("/etc/init.d/"+next.Name, "enable")
 	}
 	if commandExists("initctl") {
-		body := "description \"Lite Agent Service\"\nchdir " + next.WorkDir + "\nstart on filesystem or runlevel [2345]\nstop on runlevel [!2345]\nrespawn\nconsole none\nscript\n    exec " + next.Binary + " " + strings.Join(next.Args, " ") + "\nend script\n"
+		body := "description \"Lite-Plus Agent Service\"\nchdir " + next.WorkDir + "\nstart on filesystem or runlevel [2345]\nstop on runlevel [!2345]\nrespawn\nconsole none\nscript\n    exec " + next.Binary + " " + strings.Join(next.Args, " ") + "\nend script\n"
 		if err := os.WriteFile("/etc/init/"+next.Name+".conf", []byte(body), 0o644); err != nil {
 			return err
 		}

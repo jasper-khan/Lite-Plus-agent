@@ -1,8 +1,8 @@
-# Lite-agent
+# Lite-Plus-agent
 
-Lite 的跨平台节点监控 Agent。本仓库版本在基础监控之外，支持安全远程终端、文件管理、远程命令、Cloudflare Access、在线配置下发与配置结果回执。
+Lite-Plus 的跨平台节点监控与节点管理 Agent。本仓库版本在基础监控之外，支持安全远程终端、文件管理、远程命令、Cloudflare Access、在线配置下发、配置结果回执，以及双核节点管理。
 
-当前稳定版本：`2.3.6.3`
+当前稳定版本：`0.0.0.1`
 
 使用 MCP 代理功能，Lite需升级至 2.3.3 或更高版本。
 
@@ -10,12 +10,12 @@ Lite 的跨平台节点监控 Agent。本仓库版本在基础监控之外，支
 
 ### Linux 一键安装
 
-请优先使用 Lite 后台“添加节点”生成的一键部署命令，命令会自动带入面板地址、节点 Token 和所选安装配置。
+请优先使用 Lite-Plus 后台“添加节点”生成的一键部署命令，命令会自动带入面板地址、节点 Token 和所选安装配置。
 
 也可以直接调用安装脚本：
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/nuomiiiii/Lite-agent/main/install.sh) \
+bash <(curl -sL https://raw.githubusercontent.com/nuomiiiii/Lite-Plus-agent/main/install.sh) \
   --endpoint "https://example.com" \
   --token "your-token" \
   --enable-remote-control=false
@@ -25,52 +25,52 @@ bash <(curl -sL https://raw.githubusercontent.com/nuomiiiii/Lite-agent/main/inst
 
 ### 从 komari-agent 迁移
 
-机器上如果已经在跑上游 `komari-agent`，不要用 Lite 后台新节点的部署命令（那会换新 Token）。在原机器上执行迁移脚本：它会自行完成夺舍，装成 Lite-agent，确认新服务起来后再卸掉 `komari-agent`。
+机器上如果已经在跑上游 `komari-agent`，不要用 Lite-Plus 后台新节点的部署命令（那会换新 Token）。在原机器上执行迁移脚本：它会自行完成夺舍，装成 Lite-Plus-agent，确认新服务起来后再卸掉 `komari-agent`。已安装的 Lite-agent 用 Plus 后台部署指令升级后，会迁到 `lite-plus-agent` 服务名和 Lite-Plus 安装目录。
 
 主控地址没变：
 
 ```bash
-curl -sL https://raw.githubusercontent.com/nuomiiiii/Lite-agent/main/migrate.sh | sudo bash
+curl -sL https://raw.githubusercontent.com/nuomiiiii/Lite-Plus-agent/main/migrate.sh | sudo bash
 ```
 
 主控换了新地址：
 
 ```bash
-curl -sL https://raw.githubusercontent.com/nuomiiiii/Lite-agent/main/migrate.sh | sudo bash -s -- \
+curl -sL https://raw.githubusercontent.com/nuomiiiii/Lite-Plus-agent/main/migrate.sh | sudo bash -s -- \
   --endpoint "https://lite.example.com"
 ```
 
 Windows：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "iwr https://raw.githubusercontent.com/nuomiiiii/Lite-agent/main/migrate.ps1 -UseBasicParsing -OutFile 'migrate.ps1'; & .\migrate.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "iwr https://raw.githubusercontent.com/nuomiiiii/Lite-Plus-agent/main/migrate.ps1 -UseBasicParsing -OutFile 'migrate.ps1'; & .\migrate.ps1"
 ```
 
 新地址同样追加 `--endpoint "https://lite.example.com"`。GitHub 访问困难时可加 `--install-ghproxy`。不要给迁移脚本传 `--token`，也不要改安装目录或服务名，否则不会按原节点接手，也不会卸掉上游 Agent。
 
-Docker 请用原来的 `-e` `-t` 重建 Lite-agent 容器，不要在容器里跑迁移脚本。
+Docker 请用原来的 `-e` `-t` 重建 Lite-Plus-agent 容器，不要在容器里跑迁移脚本。
 
 ### Docker
 
 ```bash
-docker pull ghcr.io/nuomiiiii/Lite-agent:latest
+docker pull ghcr.io/nuomiiiii/lite-plus-agent:latest
 ```
 
 也可以拉取固定版本：
 
 ```bash
-docker pull ghcr.io/nuomiiiii/Lite-agent:2.3.6.3
+docker pull ghcr.io/nuomiiiii/lite-plus-agent:0.0.0.1
 ```
 
 容器的启动参数、宿主机目录挂载和节点 Token 请以 Lite 后台生成的部署命令为准。Docker 部署不会在容器内替换 Agent 二进制；升级时需拉取新镜像并重建容器。
 
 ### 二进制运行
 
-从 [Releases](https://github.com/nuomiiiii/Lite-agent/releases) 下载与系统和架构匹配的文件，赋予执行权限后启动：
+从 [Releases](https://github.com/nuomiiiii/Lite-Plus-agent/releases) 下载与系统和架构匹配的文件，赋予执行权限后启动：
 
 ```bash
-chmod +x ./Lite-agent-linux-amd64
-./Lite-agent-linux-amd64 \
+chmod +x ./Lite-Plus-agent-linux-amd64
+./Lite-Plus-agent-linux-amd64 \
   --endpoint "https://example.com" \
   --token "your-token" \
   --enable-remote-control=false
@@ -106,13 +106,13 @@ Agent 参数可以通过 JSON 配置文件、环境变量或命令行参数传�
 ```bash
 export AGENT_ENDPOINT="https://example.com"
 export AGENT_TOKEN="your-token"
-./Lite-agent
+./Lite-Plus-agent
 ```
 
 使用 JSON 配置文件：
 
 ```bash
-./Lite-agent --config ./config.json
+./Lite-Plus-agent --config ./config.json
 ```
 
 `config.json` 示例：
@@ -164,7 +164,7 @@ export AGENT_TOKEN="your-token"
 完整参数可运行：
 
 ```bash
-./Lite-agent --help
+./Lite-Plus-agent --help
 ```
 
 ## 在线配置下发
@@ -197,7 +197,7 @@ Agent 会向 Lite 回报当前实际生效的配置。保存配置后，状态�
 
 ## 自动更新
 
-本仓库构建的 Agent 默认从 `nuomiiiii/Lite-agent` 的 GitHub Releases 检查稳定版本，并只下载与当前系统和架构匹配的 `Lite-agent-*` 文件。已安装的 Lite-agent 不会再去 komari-agent 仓查找更新。
+本仓库构建的 Agent 默认从 `nuomiiiii/Lite-Plus-agent` 的 GitHub Releases 检查稳定版本，并只下载与当前系统和架构匹配的 `Lite-Plus-agent-*` 文件。已安装的 Lite-Plus-agent 不会再去 Lite-agent 或 komari-agent 仓查找更新。
 
 以下任一方式可禁用自动更新：
 
@@ -212,7 +212,7 @@ Agent 会向 Lite 回报当前实际生效的配置。保存配置后，状态�
 Client ID 与 Client Secret 必须成对配置，可以选择命令行参数、环境变量或 JSON 配置文件。凭据只保存在 Agent 所在节点，Lite Server 与 Lite Web 不保存 Cloudflare Access Service Token。
 
 ```bash
-./Lite-agent \
+./Lite-Plus-agent \
   --endpoint "https://example.com" \
   --token "your-token" \
   --cf-access-client-id "your-client-id" \
@@ -223,6 +223,7 @@ Client ID 与 Client Secret 必须成对配置，可以选择命令行参数、�
 
 | 版本 | 主要内容 |
 | --- | --- |
+| `0.0.0.1` | Lite-Plus-agent 第一版。产品号与 Lite-agent 分开。同进程双核节点管理（Xray v26.6.27、sing-box v1.14.3），后台下发的入站、节点用户、证书、额度和限速在本进程生效。默认安装目录、服务名和 Release 资产改为 `Lite-Plus-agent` / `lite-plus-agent`。从 Lite-agent 或 komari-agent 默认路径升级会搬到 Plus 布局。自动更新只认本仓。许可 GPL-3.0。基线 Lite-agent `2.3.10.0`。 |
 | `2.1.0` | 支持由 Lite 下发流量重置日；完善参数校验、事件去重和网络统计稳定性。 |
 | `2.1.5` | 新增安全远程终端与文件管理协议，支持独立会话、目录浏览和文件传输。 |
 | `2.1.6` | Agent Token 改用 `Authorization: Bearer` 请求头；旧节点需轮换 Token 并重新部署。 |
@@ -249,5 +250,7 @@ Client ID 与 Client Secret 必须成对配置，可以选择命令行参数、�
 | `2.3.6.1` | btrfs 容器（如 LXC/LXD）设置了磁盘配额时，面板上的磁盘总量和已用量改为容器自己的配额，不再显示整个存储池。没有设置配额、不是 btrfs，或配额读不到时，磁盘显示与以前相同。感谢 IShinji 的 [PR #2](https://github.com/nuomiiiii/Lite-agent/pull/2)。 |
 | `2.3.6.2` | ICMP、TCP、HTTP 探测延迟保留毫秒小数。Lite 2.3.7 同版本第二次更新开始用 value_ms 保存到 0.01 ms；旧 Lite 使用兼容整数 value，探测结果仍可正常接收。极小延迟按保存精度可能显示为 0.00 ms。失败时仍记为失败。 |
 | `2.3.6.3` | LXC/LXD 容器的运行时间改为容器自己的开机时长，不再显示宿主机的开机时长。读不到容器自己的时长时，仍按原来的方式显示。感谢 IShinji 的 [PR #3](https://github.com/nuomiiiii/Lite-agent/pull/3)。 |
+| `2.3.6.4` | HTTP 探测改为带上常见浏览器请求头。原先部分站点会拒绝默认请求并返回 403，延迟被记成失败。未返回成功状态时，探测结果仍记为失败。 |
+| `2.3.10.0` | 修复 CVE-2026-111943。当前 Agent 不受该问题影响，此次一并跟进。 |
 
-完整发布记录和升级说明请查看 [GitHub Releases](https://github.com/nuomiiiii/Lite-agent/releases)。
+完整发布记录和升级说明请查看 [GitHub Releases](https://github.com/nuomiiiii/Lite-Plus-agent/releases)。

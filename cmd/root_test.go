@@ -70,6 +70,16 @@ func TestValidateRuntimeConfig(t *testing.T) {
 	}
 }
 
+func TestRootCmdDisablesAutoUpdateByDefault(t *testing.T) {
+	flag := RootCmd.PersistentFlags().Lookup("disable-auto-update")
+	if flag == nil {
+		t.Fatal("disable-auto-update flag is missing")
+	}
+	if flag.DefValue != "true" {
+		t.Fatalf("disable-auto-update default = %q, want true", flag.DefValue)
+	}
+}
+
 func TestLoadEffectiveConfigPrecedence(t *testing.T) {
 	tests := []struct {
 		name      string
