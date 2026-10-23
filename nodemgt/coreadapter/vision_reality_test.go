@@ -102,10 +102,8 @@ func TestXrayTLSVisionConnectAndPolicy(t *testing.T) {
 		}
 		defer aliceCli.Close()
 		defer alice.Close()
-		if cli, conn, err := xrayDial(port, vlessAlice, "xtls-rprx-vision", "tls", "", pin, tlsEcho.Addr().String()); err == nil {
-			conn.Close()
-			cli.Close()
-			t.Fatal("second vision device allowed")
+		if !echoConn(alice, []byte("alice")) {
+			t.Fatal("vision echo via freedom")
 		}
 		bobCli, bob, err := xrayDial(port, vlessBob, "xtls-rprx-vision", "tls", "", pin, tlsEcho.Addr().String())
 		if err != nil {

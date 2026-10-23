@@ -375,7 +375,7 @@ func (c *singBoxCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outb
 			}
 			items = append(items, cloned)
 		}
-		if coreOwnedTLS(in, users) {
+		if policyExitNeeded(in, users) {
 			policyTags = append(policyTags, tag)
 		}
 		if len(pendingFronts) > 0 {

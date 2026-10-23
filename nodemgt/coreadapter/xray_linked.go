@@ -392,7 +392,7 @@ func (c *xrayCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outboun
 			continue
 		}
 		items = append(items, item)
-		if coreOwnedTLS(in, users) {
+		if policyExitNeeded(in, users) {
 			policyTags = append(policyTags, tag)
 		}
 		fronts = append(fronts, inboundPublicFronts(

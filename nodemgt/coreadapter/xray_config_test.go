@@ -124,10 +124,37 @@ func TestXrayUserFlowVisionKeepsCoreTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, part := range []string{`"security":"tls"`, `"xtls-rprx-vision"`, `"nodemgt-policy-u1"`} {
+	for _, part := range []string{`"security":"tls"`, `"xtls-rprx-vision"`} {
 		if !strings.Contains(text, part) {
 			t.Fatalf("missing %s in %s", part, text)
 		}
+	}
+	if strings.Contains(text, `"nodemgt-policy-u1"`) {
+		t.Fatal("vision must not detour through policy SOCKS")
+	}
+}
+
+func TestXrayRealityVisionSkipsPolicySocks(t *testing.T) {
+	c := newXrayCore()
+	c.users = []UserSpec{{ID: "u1", UUID: vlessAlice, Password: "pw"}}
+	c.inbounds = []InboundSpec{{
+		ID:         "reality",
+		Protocol:   "vless",
+		Listen:     "127.0.0.1",
+		Port:       443,
+		Flow:       "xtls-rprx-vision",
+		StreamJSON: `{"network":"tcp","security":"reality","realitySettings":{"dest":"127.0.0.1:9","serverNames":["audit.test"],"privateKey":"dGVzdA","shortIds":["abcd"]}}`,
+	}}
+	raw, err := c.configJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if strings.Contains(text, `"nodemgt-policy-`) {
+		t.Fatalf("reality+vision must go to freedom, got policy SOCKS: %s", text)
+	}
+	if !strings.Contains(text, `"tag":"direct"`) {
+		t.Fatalf("missing direct outbound: %s", text)
 	}
 }
 
@@ -420,7 +447,7 @@ func singBoxTypedOutbounds(t *testing.T, raw []byte, typ string) []map[string]an
 	return out
 }
 
-func TestXrayVisionKeepsCoreTLSAndPolicyExit(t *testing.T) {
+func TestXrayVisionKeepsCoreTLSWithoutPolicyExit(t *testing.T) {
 	c := newXrayCore()
 	cert, key := testPEMs(t)
 	c.users = []UserSpec{{ID: "u1", UUID: vlessAlice, Password: "pw"}}
@@ -433,10 +460,13 @@ func TestXrayVisionKeepsCoreTLSAndPolicyExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, part := range []string{`"security":"tls"`, `"xtls-rprx-vision"`, `"nodemgt-policy-u1"`} {
+	for _, part := range []string{`"security":"tls"`, `"xtls-rprx-vision"`} {
 		if !strings.Contains(text, part) {
 			t.Fatalf("missing %s in %s", part, text)
 		}
+	}
+	if strings.Contains(text, `"nodemgt-policy-u1"`) {
+		t.Fatal("vision must not detour through policy SOCKS")
 	}
 }
 

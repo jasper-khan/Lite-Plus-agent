@@ -430,6 +430,17 @@ func coreOwnedTLS(in InboundSpec, users []UserSpec) bool {
 	return inboundPresentsTLS(in) && userFlowVision(users, in.ID)
 }
 
+func inboundUsesVision(in InboundSpec, users []UserSpec) bool {
+	return inboundVision(in) || userFlowVision(users, in.ID)
+}
+
+// policyExitNeeded is Reality/TLS without Vision. Vision splices to the
+// outbound; a SOCKS hop after it accepts TCP then fails HTTP (3x-ui uses
+// freedom). Quota for Vision comes from Xray user stats.
+func policyExitNeeded(in InboundSpec, users []UserSpec) bool {
+	return coreOwnedTLS(in, users) && !inboundUsesVision(in, users)
+}
+
 func policyExitTag(userID string) string {
 	return "nodemgt-policy-" + userID
 }
