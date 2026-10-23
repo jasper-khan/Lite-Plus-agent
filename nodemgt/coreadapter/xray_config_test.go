@@ -54,12 +54,12 @@ func TestXrayRealitySniffingForcesRouteOnly(t *testing.T) {
 	c := newXrayCore()
 	c.users = []UserSpec{{ID: "u1", UUID: vlessAlice, Password: "pw"}}
 	c.inbounds = []InboundSpec{{
-		ID:         "reality",
-		Listen:     "127.0.0.1",
-		Port:       443,
-		Protocol:   "vless",
-		Flow:       "xtls-rprx-vision",
-		StreamJSON: `{"network":"tcp","security":"reality"}`,
+		ID:           "reality",
+		Listen:       "127.0.0.1",
+		Port:         443,
+		Protocol:     "vless",
+		Flow:         "xtls-rprx-vision",
+		StreamJSON:   `{"network":"tcp","security":"reality"}`,
 		SettingsJSON: `{"sniffing":true,"security":"reality","flow":"xtls-rprx-vision","dest_override":"http,tls,quic"}`,
 	}}
 	raw, err := c.configJSON()
@@ -158,7 +158,75 @@ func TestXrayRealityVisionSkipsPolicySocks(t *testing.T) {
 	}
 }
 
-func TestXrayBusinessRouteKeepsPolicyDialer(t *testing.T) {
+func TestXrayRealityWithoutVisionSkipsPolicySocks(t *testing.T) {
+	c := newXrayCore()
+	c.users = []UserSpec{{ID: "u1", UUID: vlessAlice, Password: "pw"}}
+	c.inbounds = []InboundSpec{{
+		ID:         "reality",
+		Protocol:   "vless",
+		Listen:     "127.0.0.1",
+		Port:       443,
+		StreamJSON: `{"network":"tcp","security":"reality","realitySettings":{"dest":"127.0.0.1:9","serverNames":["audit.test"],"privateKey":"dGVzdA","shortIds":["abcd"]}}`,
+	}}
+	raw, err := c.configJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if strings.Contains(text, `"nodemgt-policy-`) {
+		t.Fatalf("xray reality must go to freedom without vision: %s", text)
+	}
+}
+
+func TestSingBoxRealityVisionKeepsPolicySocks(t *testing.T) {
+	c := newSingBoxCore()
+	c.users = []UserSpec{{ID: "u1", UUID: vlessAlice, Password: "pw"}}
+	c.inbounds = []InboundSpec{{
+		ID:         "reality",
+		Protocol:   "vless",
+		Listen:     "127.0.0.1",
+		Port:       443,
+		Flow:       "xtls-rprx-vision",
+		StreamJSON: `{"network":"tcp","security":"reality","realitySettings":{"dest":"127.0.0.1:9","serverNames":["audit.test"],"privateKey":"dGVzdA","shortIds":["abcd"]}}`,
+	}}
+	raw, err := c.configJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, `"nodemgt-policy-u1"`) {
+		t.Fatalf("sing-box reality has no vision splice, keep policy SOCKS: %s", text)
+	}
+	if !strings.Contains(text, `"network":"tcp"`) {
+		t.Fatalf("sing-box policy SOCKS must be tcp-only: %s", text)
+	}
+}
+
+func TestSingBoxSniffingIsRouteOnly(t *testing.T) {
+	c := newSingBoxCore()
+	c.users = []UserSpec{{ID: "u1", UUID: vlessAlice, Password: "pw"}}
+	c.inbounds = []InboundSpec{{
+		ID:           "reality",
+		Protocol:     "vless",
+		Listen:       "127.0.0.1",
+		Port:         443,
+		StreamJSON:   `{"network":"tcp","security":"reality"}`,
+		SettingsJSON: `{"sniffing":true,"security":"reality","dest_override":"http,tls,quic"}`,
+	}}
+	raw, err := c.configJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	if !strings.Contains(text, `"action":"sniff"`) {
+		t.Fatalf("sniffing inbound needs sniff action: %s", text)
+	}
+	if strings.Contains(text, "sniff_override_destination") {
+		t.Fatalf("reality sniff must not override dest: %s", text)
+	}
+}
+
+func TestXrayBusinessRouteSkipsPolicyDialer(t *testing.T) {
 	c := newXrayCore()
 	c.users = []UserSpec{{ID: "u1", UUID: vlessAlice, Password: "pw"}}
 	c.inbounds = []InboundSpec{{
@@ -172,13 +240,11 @@ func TestXrayBusinessRouteKeepsPolicyDialer(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(raw)
-	for _, part := range []string{`"nodemgt-policy-u1"`, `"outboundTag":"audit-direct"`} {
-		if !strings.Contains(text, part) {
-			t.Fatalf("missing %s in %s", part, text)
-		}
+	if strings.Contains(text, `"nodemgt-policy-`) {
+		t.Fatalf("xray reality must not detour policy SOCKS: %s", text)
 	}
-	if !strings.Contains(text, `"user"`) {
-		t.Fatal("missing per-user policy route")
+	if !strings.Contains(text, `"outboundTag":"audit-direct"`) {
+		t.Fatalf("missing business route: %s", text)
 	}
 }
 
@@ -202,7 +268,10 @@ func TestXraySocksViaKeepsOriginalChain(t *testing.T) {
 	if strings.Contains(text, `"nodemgt-via-`) {
 		t.Fatalf("policy cloned socks outbound and overwrote via: %s", text)
 	}
-	for _, part := range []string{`"nodemgt-policy-u1-audit-A"`, `"dialerProxy":"audit-B"`, `"outboundTag":"audit-A"`} {
+	if strings.Contains(text, `"nodemgt-policy-`) {
+		t.Fatalf("xray reality must not detour policy SOCKS: %s", text)
+	}
+	for _, part := range []string{`"dialerProxy":"audit-B"`, `"outboundTag":"audit-A"`} {
 		if !strings.Contains(text, part) {
 			t.Fatalf("missing %s in %s", part, text)
 		}
@@ -253,8 +322,11 @@ func TestXrayVLESSViaKeepsPolicyExit(t *testing.T) {
 	if strings.Contains(text, `"nodemgt-via-`) {
 		t.Fatalf("policy cloned vless outbound and skipped hop A: %s", text)
 	}
-	if !strings.Contains(text, `"nodemgt-policy-u1-audit-A"`) {
-		t.Fatalf("missing vless policy exit in %s", text)
+	if strings.Contains(text, `"nodemgt-policy-`) {
+		t.Fatalf("xray reality must not detour policy SOCKS: %s", text)
+	}
+	if !strings.Contains(text, `"outboundTag":"audit-A"`) {
+		t.Fatalf("missing vless route in %s", text)
 	}
 }
 
@@ -278,8 +350,11 @@ func TestXrayVLESSTLSKeepsPolicyExit(t *testing.T) {
 	if strings.Contains(text, `"nodemgt-via-`) {
 		t.Fatalf("tls vless fell back to cloned outbound: %s", text)
 	}
-	if !strings.Contains(text, `"nodemgt-policy-u1-audit-exit"`) {
-		t.Fatalf("missing tls vless policy exit in %s", text)
+	if strings.Contains(text, `"nodemgt-policy-`) {
+		t.Fatalf("xray reality must not detour policy SOCKS: %s", text)
+	}
+	if !strings.Contains(text, `"outboundTag":"audit-exit"`) {
+		t.Fatalf("missing tls vless route in %s", text)
 	}
 }
 
@@ -303,7 +378,10 @@ func TestXrayGRPCUsesCoreDetour(t *testing.T) {
 	if strings.Contains(text, `"nodemgt-via-`) {
 		t.Fatalf("grpc fell back to metered dialerProxy: %s", text)
 	}
-	for _, part := range []string{`"nodemgt-policy-u1-audit-exit"`, `"nodemgt-core-audit-exit"`, `"network":"grpc"`} {
+	if strings.Contains(text, `"nodemgt-policy-`) {
+		t.Fatalf("xray reality must not detour policy SOCKS: %s", text)
+	}
+	for _, part := range []string{`"outboundTag":"audit-exit"`, `"network":"grpc"`} {
 		if !strings.Contains(text, part) {
 			t.Fatalf("missing %s in %s", part, text)
 		}
@@ -491,5 +569,31 @@ func TestXrayOutboundAppliesRealityPublicKey(t *testing.T) {
 		if !strings.Contains(text, part) {
 			t.Fatalf("missing %s in %s", part, text)
 		}
+	}
+}
+
+func TestSingBoxOutboundAppliesRealityPublicKey(t *testing.T) {
+	c := newSingBoxCore()
+	c.outbounds = []OutboundSpec{{
+		ID: "ob1", Name: "relay", Protocol: "vless", Enabled: true,
+		SettingsJSON: `{"address":"example.com","port":443,"uuid":"11111111-1111-1111-1111-111111111111","flow":"xtls-rprx-vision","transport":"tcp","security":"reality","sni":"www.microsoft.com","fingerprint":"chrome","reality_public_key":"pubkey","reality_short_id":"abcd"}`,
+	}}
+	raw, err := c.configJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, part := range []string{
+		`"public_key":"pubkey"`,
+		`"short_id":"abcd"`,
+		`"server_name":"www.microsoft.com"`,
+		`"fingerprint":"chrome"`,
+	} {
+		if !strings.Contains(text, part) {
+			t.Fatalf("missing %s in %s", part, text)
+		}
+	}
+	if !strings.Contains(text, `"reality"`) {
+		t.Fatalf("missing reality block: %s", text)
 	}
 }

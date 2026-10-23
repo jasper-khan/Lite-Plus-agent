@@ -13,6 +13,7 @@ type Session struct {
 	IP     string
 	SeenAt time.Time
 	Conn   io.Closer
+	HideIP bool
 }
 
 type Set struct {
@@ -28,7 +29,7 @@ func New() *Set {
 func (s *Set) Add(sess *Session) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if sess.IP == "" && sess.Conn != nil {
+	if sess.IP == "" && !sess.HideIP && sess.Conn != nil {
 		if c, ok := sess.Conn.(interface{ RemoteAddr() net.Addr }); ok && c.RemoteAddr() != nil {
 			host, _, err := net.SplitHostPort(c.RemoteAddr().String())
 			if err != nil {
@@ -85,7 +86,7 @@ func (s *Set) LiveIPs() map[string][]string {
 		seen := map[string]struct{}{}
 		for _, sess := range byID {
 			ip := sess.IP
-			if ip == "" {
+			if sess.HideIP || ip == "" {
 				continue
 			}
 			if _, ok := seen[ip]; ok {

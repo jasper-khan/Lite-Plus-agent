@@ -18,6 +18,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -121,6 +122,7 @@ func TestXrayTLSVisionConnectAndPolicy(t *testing.T) {
 }
 
 func TestRealityQuotaDeviceAndPeerSession(t *testing.T) {
+	requireAltLoopback(t)
 	echo := startEcho(t)
 	defer echo.Close()
 	certPEM, keyPEM, _ := auditCerts(t)
@@ -161,10 +163,33 @@ func TestRealityQuotaDeviceAndPeerSession(t *testing.T) {
 			}
 			defer aliceCli.Close()
 			defer alice.Close()
-			if cli, conn, err := xrayDial(port, vlessAlice, "", "reality", pub, "", echo.Addr().String()); err == nil {
+			if core.Name() == "xray" {
+				if !echoConn(alice, []byte("alice")) {
+					t.Fatal("xray reality echo via freedom")
+				}
+			}
+			sameCli, same, err := xrayDialRetry(port, vlessAlice, "", "reality", pub, "", echo.Addr().String())
+			if err != nil {
+				t.Fatal("same ip extra conn")
+			}
+			same.Close()
+			sameCli.Close()
+			if cli, conn, err := xrayDialAs(t, port, vlessAlice, "", "reality", pub, "", echo.Addr().String(), "127.0.0.2"); err == nil {
 				conn.Close()
 				cli.Close()
-				t.Fatal("second reality device allowed")
+				t.Fatal("second reality ip allowed")
+			}
+			if core.Name() == "xray" {
+				bobCli, bob, err := xrayDialRetry(port, vlessBob, "", "reality", pub, "", echo.Addr().String())
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer bobCli.Close()
+				defer bob.Close()
+				if !echoConn(bob, []byte("bob")) {
+					t.Fatal("xray reality peer echo")
+				}
+				return
 			}
 			bobCli, bob, err := xrayDialRetry(port, vlessBob, "", "reality", pub, "", echo.Addr().String())
 			if err != nil {
@@ -193,6 +218,7 @@ func TestRealityQuotaDeviceAndPeerSession(t *testing.T) {
 }
 
 func TestRoutedRealityQuotaDeviceAndPeerSession(t *testing.T) {
+	requireAltLoopback(t)
 	echo := startEcho(t)
 	defer echo.Close()
 	certPEM, keyPEM, _ := auditCerts(t)
@@ -236,10 +262,33 @@ func TestRoutedRealityQuotaDeviceAndPeerSession(t *testing.T) {
 			}
 			defer aliceCli.Close()
 			defer alice.Close()
-			if cli, conn, err := xrayDial(port, vlessAlice, "", "reality", pub, "", echo.Addr().String()); err == nil {
+			if core.Name() == "xray" {
+				if !echoConn(alice, []byte("alice")) {
+					t.Fatal("xray routed reality echo via freedom")
+				}
+			}
+			sameCli, same, err := xrayDialRetry(port, vlessAlice, "", "reality", pub, "", echo.Addr().String())
+			if err != nil {
+				t.Fatal("same ip extra conn")
+			}
+			same.Close()
+			sameCli.Close()
+			if cli, conn, err := xrayDialAs(t, port, vlessAlice, "", "reality", pub, "", echo.Addr().String(), "127.0.0.2"); err == nil {
 				conn.Close()
 				cli.Close()
-				t.Fatal("second routed reality device allowed")
+				t.Fatal("second routed reality ip allowed")
+			}
+			if core.Name() == "xray" {
+				bobCli, bob, err := xrayDialRetry(port, vlessBob, "", "reality", pub, "", echo.Addr().String())
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer bobCli.Close()
+				defer bob.Close()
+				if !echoConn(bob, []byte("bob")) {
+					t.Fatal("xray routed reality peer echo")
+				}
+				return
 			}
 			bobCli, bob, err := xrayDialRetry(port, vlessBob, "", "reality", pub, "", echo.Addr().String())
 			if err != nil {
@@ -689,7 +738,7 @@ func TestRoutedRealityVLESSTLSRejectsPlain(t *testing.T) {
 func TestRoutedRealityVLESSTLSConnects(t *testing.T) {
 	echo := startEcho(t)
 	defer echo.Close()
-	certPEM, keyPEM, _ := auditCerts(t)
+	certPEM, keyPEM, pin := auditCerts(t)
 	withHopTLSRoots(t, certPEM)
 	relay, hits := startTLSVLESSRelay(t, certPEM, keyPEM)
 	defer relay.Close()
@@ -706,7 +755,7 @@ func TestRoutedRealityVLESSTLSConnects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	obs := []OutboundSpec{tlsVLESSOutbound("audit-exit", relay.Addr().String())}
+	obs := []OutboundSpec{withPinnedCert(tlsVLESSOutbound("audit-exit", relay.Addr().String()), pin)}
 	routes := []RouteSpec{{ID: "business", Enabled: true, Priority: 1, RuleJSON: `{"inbound_id":"reality","outbound_id":"audit-exit"}`}}
 	for _, maker := range []func() Core{NewXray, NewSingBox} {
 		core := maker()
@@ -1082,7 +1131,7 @@ func TestRoutedRealityVLESSWSEscapedPath(t *testing.T) {
 func TestRoutedRealityVLESSTLSOmitsSNI(t *testing.T) {
 	echo := startEcho(t)
 	defer echo.Close()
-	certPEM, keyPEM := namedTestCerts(t, "localhost")
+	certPEM, keyPEM, pin := namedTestCertsPinned(t, "localhost")
 	withHopTLSRoots(t, certPEM)
 	relay, hits, names := startTLSVLESSRelayHello(t, certPEM, keyPEM)
 	defer relay.Close()
@@ -1106,7 +1155,7 @@ func TestRoutedRealityVLESSTLSOmitsSNI(t *testing.T) {
 	}
 	var relayPort int
 	fmt.Sscanf(portStr, "%d", &relayPort)
-	obs := []OutboundSpec{tlsVLESSOutboundAt("audit-exit", "localhost", relayPort)}
+	obs := []OutboundSpec{withPinnedCert(tlsVLESSOutboundAt("audit-exit", "localhost", relayPort), pin)}
 	routes := []RouteSpec{{ID: "business", Enabled: true, Priority: 1, RuleJSON: `{"inbound_id":"reality","outbound_id":"audit-exit"}`}}
 	for _, maker := range []func() Core{NewXray, NewSingBox} {
 		core := maker()
@@ -1353,6 +1402,20 @@ func tlsVLESSOutbound(id, addr string) OutboundSpec {
 	return o
 }
 
+func withPinnedCert(o OutboundSpec, pin string) OutboundSpec {
+	var s map[string]any
+	if err := json.Unmarshal([]byte(o.SettingsJSON), &s); err != nil {
+		panic(err)
+	}
+	s["pinned_peer_cert_sha256"] = pin
+	raw, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	o.SettingsJSON = string(raw)
+	return o
+}
+
 func tlsVLESSOutboundAt(id, host string, port int) OutboundSpec {
 	raw, err := json.Marshal(map[string]any{
 		"address": host, "port": port, "uuid": vlessAlice, "security": "tls", "transport": "tcp",
@@ -1446,6 +1509,12 @@ func withHopTLSRoots(t *testing.T, certPEM string) {
 
 func namedTestCerts(t *testing.T, name string) (string, string) {
 	t.Helper()
+	certPEM, keyPEM, _ := namedTestCertsPinned(t, name)
+	return certPEM, keyPEM
+}
+
+func namedTestCertsPinned(t *testing.T, name string) (string, string, string) {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -1467,7 +1536,8 @@ func namedTestCerts(t *testing.T, name string) (string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}))
+	pin := fmt.Sprintf("%x", sha256.Sum256(der))
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), string(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})), pin
 }
 
 func startWSVLESSRelay(t *testing.T, path string) (net.Listener, chan string) {
@@ -2011,6 +2081,72 @@ func TestXrayRealitySOCKSMixedMeter(t *testing.T) {
 	}
 }
 
+func srcNAT(t *testing.T, dest, srcIP string) (string, func()) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for {
+			client, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				d := &net.Dialer{Timeout: 2 * time.Second, LocalAddr: &net.TCPAddr{IP: net.ParseIP(srcIP)}}
+				backend, err := d.Dial("tcp", dest)
+				if err != nil {
+					return
+				}
+				defer backend.Close()
+				go func() {
+					_, _ = io.Copy(backend, c)
+					_ = backend.Close()
+				}()
+				_, _ = io.Copy(c, backend)
+			}(client)
+		}
+	}()
+	return ln.Addr().String(), func() { _ = ln.Close() }
+}
+
+func xrayDialAs(t *testing.T, port int, id, flow, security, pub, pin, target, srcIP string) (*xraycore.Instance, net.Conn, error) {
+	t.Helper()
+	relay, stop := srcNAT(t, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), srcIP)
+	host, portStr, err := net.SplitHostPort(relay)
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
+	_ = host
+	rport, err := strconv.Atoi(portStr)
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
+	cli, conn, err := xrayDial(rport, id, flow, security, pub, pin, target)
+	if err != nil {
+		stop()
+		return nil, nil, err
+	}
+	return cli, &stopConn{Conn: conn, stop: stop}, nil
+}
+
+type stopConn struct {
+	net.Conn
+	stop func()
+}
+
+func (c *stopConn) Close() error {
+	err := c.Conn.Close()
+	if c.stop != nil {
+		c.stop()
+	}
+	return err
+}
+
 func xrayDialRetry(port int, id, flow, security, pub, pin, target string) (*xraycore.Instance, net.Conn, error) {
 	cli, conn, err := xrayDial(port, id, flow, security, pub, pin, target)
 	if err == nil {
@@ -2064,6 +2200,7 @@ func xrayDial(port int, id, flow, security, pub, pin, target string) (*xraycore.
 	if err != nil {
 		return nil, nil, err
 	}
+	restoreXraySystemDialer()
 	d, err := proxy.SOCKS5("tcp", fmt.Sprintf("127.0.0.1:%d", socksPort), nil, &net.Dialer{Timeout: 2 * time.Second})
 	if err != nil {
 		inst.Close()

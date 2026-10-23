@@ -192,10 +192,12 @@ func (n *Native) handle(conn net.Conn) {
 		_, _ = conn.Write([]byte("ERR forbidden\n"))
 		return
 	}
-	if user.DeviceLimit > 0 && n.sess.Count(user.ID) >= user.DeviceLimit {
-		_, _ = conn.Write([]byte("ERR devices\n"))
+	ip := connClientIP(conn)
+	if !nodeExec.ips.hold(user.ID, ip, user.DeviceLimit) {
+		_, _ = conn.Write([]byte("ERR ips\n"))
 		return
 	}
+	defer nodeExec.ips.release(user.ID, ip)
 	sessID := fmt.Sprintf("%s-%d", user.ID, time.Now().UnixNano())
 	n.sess.Add(&sessions.Session{ID: sessID, UserID: user.ID, Conn: conn})
 	defer n.sess.Remove(sessID)

@@ -116,9 +116,37 @@ func TestStartPolicyFrontsDual(t *testing.T) {
 	}
 }
 
-func TestXrayDualWildcardCreatesTwoFronts(t *testing.T) {
+func TestXrayWSIdentityStillCreatesFronts(t *testing.T) {
 	c := newXrayCore()
 	_, _, fronts, err := c.buildConfig(
+		[]UserSpec{{ID: "u1", UUID: vlessAlice}},
+		[]InboundSpec{{
+			ID:         "ws",
+			Listen:     "127.0.0.1",
+			Port:       38400,
+			Protocol:   "vless",
+			StreamJSON: `{"network":"ws","security":"none","wsSettings":{"path":"/vless"}}`,
+		}},
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var public []frontSpec
+	for _, front := range fronts {
+		if !front.Exit {
+			public = append(public, front)
+		}
+	}
+	if len(public) != 1 || public[0].Addr != "127.0.0.1:38400" || !public[0].Identity {
+		t.Fatalf("ws identity front %+v", public)
+	}
+}
+
+func TestXrayRealityDualWildcardBindsCore(t *testing.T) {
+	c := newXrayCore()
+	raw, _, fronts, err := c.buildConfig(
 		[]UserSpec{{ID: "u1", UUID: vlessAlice}},
 		[]InboundSpec{{
 			ID:           "in1",
@@ -134,27 +162,35 @@ func TestXrayDualWildcardCreatesTwoFronts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var public []frontSpec
 	for _, front := range fronts {
-		if front.Exit {
-			continue
+		if !front.Exit {
+			t.Fatalf("reality must bind the core, got public front %+v", front)
 		}
-		public = append(public, front)
 	}
-	if len(public) != 2 {
-		t.Fatalf("public fronts=%d want 2: %+v", len(public), fronts)
+	var cfg struct {
+		Inbounds []struct {
+			Listen string `json:"listen"`
+			Port   int    `json:"port"`
+			Tag    string `json:"tag"`
+		} `json:"inbounds"`
 	}
-	if public[0].Addr != "0.0.0.0:38401" || public[1].Addr != "[::]:38401" {
-		t.Fatalf("front addrs %q %q", public[0].Addr, public[1].Addr)
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
 	}
-	if public[0].Dest != public[1].Dest {
-		t.Fatalf("dual fronts must share dest, got %q %q", public[0].Dest, public[1].Dest)
+	var listens []string
+	for _, in := range cfg.Inbounds {
+		if in.Port == 38401 {
+			listens = append(listens, in.Listen)
+		}
+	}
+	if len(listens) != 2 || listens[0] != "0.0.0.0" || listens[1] != "::" {
+		t.Fatalf("reality dual listens %v", listens)
 	}
 }
 
-func TestSingBoxTCPDualWildcardCreatesTwoFronts(t *testing.T) {
+func TestSingBoxRealityDualWildcardBindsCore(t *testing.T) {
 	c := newSingBoxCore()
-	_, _, fronts, err := c.buildConfig(
+	raw, _, fronts, err := c.buildConfig(
 		[]UserSpec{{ID: "u1", UUID: vlessAlice}},
 		[]InboundSpec{{
 			ID:           "in1",
@@ -170,18 +206,29 @@ func TestSingBoxTCPDualWildcardCreatesTwoFronts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var public []frontSpec
 	for _, front := range fronts {
-		if front.Exit {
-			continue
+		if !front.Exit {
+			t.Fatalf("reality must bind the core, got public front %+v", front)
 		}
-		public = append(public, front)
 	}
-	if len(public) != 2 {
-		t.Fatalf("public fronts=%d want 2: %+v", len(public), fronts)
+	var cfg struct {
+		Inbounds []struct {
+			Listen     string `json:"listen"`
+			ListenPort int    `json:"listen_port"`
+			Type       string `json:"type"`
+		} `json:"inbounds"`
 	}
-	if public[0].Addr != "0.0.0.0:38402" || public[1].Addr != "[::]:38402" {
-		t.Fatalf("front addrs %q %q", public[0].Addr, public[1].Addr)
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	var listens []string
+	for _, in := range cfg.Inbounds {
+		if in.Type == "vless" && in.ListenPort == 38402 {
+			listens = append(listens, in.Listen)
+		}
+	}
+	if len(listens) != 2 || listens[0] != "0.0.0.0" || listens[1] != "::" {
+		t.Fatalf("reality dual listens %v", listens)
 	}
 }
 

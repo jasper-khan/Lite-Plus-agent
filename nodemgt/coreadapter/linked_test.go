@@ -121,6 +121,7 @@ func TestDualCoreSOCKSPersonalControl(t *testing.T) {
 }
 
 func TestDualCoreSOCKSQuotaDeviceAndPeerSession(t *testing.T) {
+	requireAltLoopback(t)
 	echo := startEcho(t)
 	defer echo.Close()
 	echoAddr := echo.Addr().String()
@@ -148,8 +149,13 @@ func TestDualCoreSOCKSQuotaDeviceAndPeerSession(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer alice.Close()
-			if _, err := socksTry(addr, "alice", "pw1", echoAddr); err == nil {
-				t.Fatal("second device allowed")
+			same, err := socksTry(addr, "alice", "pw1", echoAddr)
+			if err != nil {
+				t.Fatal("same ip extra conn")
+			}
+			same.Close()
+			if _, err := socksTryFrom(addr, "alice", "pw1", echoAddr, "127.0.0.2"); err == nil {
+				t.Fatal("second ip allowed")
 			}
 			bob, err := socksTry(addr, "bob", "pw2", echoAddr)
 			if err != nil {
@@ -248,7 +254,15 @@ func socksEcho(t *testing.T, proxyAddr, user, pass, dest string, payload []byte)
 }
 
 func socksTry(proxyAddr, user, pass, dest string) (net.Conn, error) {
-	d, err := proxy.SOCKS5("tcp", proxyAddr, &proxy.Auth{User: user, Password: pass}, proxy.Direct)
+	return socksTryFrom(proxyAddr, user, pass, dest, "")
+}
+
+func socksTryFrom(proxyAddr, user, pass, dest, localIP string) (net.Conn, error) {
+	var forward proxy.Dialer = proxy.Direct
+	if localIP != "" {
+		forward = &net.Dialer{Timeout: 2 * time.Second, LocalAddr: &net.TCPAddr{IP: net.ParseIP(localIP)}}
+	}
+	d, err := proxy.SOCKS5("tcp", proxyAddr, &proxy.Auth{User: user, Password: pass}, forward)
 	if err != nil {
 		return nil, err
 	}
@@ -256,6 +270,7 @@ func socksTry(proxyAddr, user, pass, dest string) (net.Conn, error) {
 }
 
 func TestPlainVLESSQuotaDeviceAndPeerSession(t *testing.T) {
+	requireAltLoopback(t)
 	echo := startEcho(t)
 	defer echo.Close()
 	host, portStr, err := net.SplitHostPort(echo.Addr().String())
@@ -287,8 +302,13 @@ func TestPlainVLESSQuotaDeviceAndPeerSession(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer alice.Close()
-			if _, err := vlessOpen(addr, vlessAlice, host, destPort); err == nil {
-				t.Fatal("second vless device allowed")
+			same, err := vlessOpen(addr, vlessAlice, host, destPort)
+			if err != nil {
+				t.Fatal("same ip extra conn")
+			}
+			same.Close()
+			if _, err := vlessOpenFrom(addr, vlessAlice, host, destPort, "127.0.0.2"); err == nil {
+				t.Fatal("second vless ip allowed")
 			}
 			bob, err := vlessOpen(addr, vlessBob, host, destPort)
 			if err != nil {
@@ -358,7 +378,15 @@ func TestSOCKSRateCompletesAndIdleSnapshotEmpty(t *testing.T) {
 }
 
 func vlessOpen(addr, id, destHost string, destPort int) (net.Conn, error) {
-	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	return vlessOpenFrom(addr, id, destHost, destPort, "")
+}
+
+func vlessOpenFrom(addr, id, destHost string, destPort int, localIP string) (net.Conn, error) {
+	d := &net.Dialer{Timeout: 3 * time.Second}
+	if localIP != "" {
+		d.LocalAddr = &net.TCPAddr{IP: net.ParseIP(localIP)}
+	}
+	conn, err := d.Dial("tcp", addr)
 	if err != nil {
 		return nil, err
 	}

@@ -47,7 +47,7 @@ type UserSpec struct {
 	QuotaBytes    int64
 	UsedBytes     int64
 	RateLimitBps  int64
-	DeviceLimit   int
+	DeviceLimit   int // unique client IP cap; 0 = unlimited. not a device/session cap.
 	Disabled      bool
 	Expired       bool
 	Flow          string

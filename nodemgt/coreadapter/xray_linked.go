@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	xraycore "github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/stats"
@@ -137,20 +138,30 @@ func (c *xrayCore) TakeSnapshots() []Snapshot {
 		c.lastTraffic = map[string]int64{}
 	}
 	c.lastSeen = byUser
+	coreIDs := map[string]struct{}{}
+	var coreOut []Snapshot
 	for id, n := range byUser {
-		if c.policy.frontMetered(id) {
-			continue
-		}
 		prev := c.lastTraffic[id]
 		delta := n - prev
 		if delta < 0 {
 			delta = n
 		}
 		if delta > 0 {
-			out = append(out, Snapshot{UserID: id, Bytes: delta})
+			coreOut = append(coreOut, Snapshot{UserID: id, Bytes: delta})
+			coreIDs[id] = struct{}{}
 		}
 	}
-	return out
+	if len(coreOut) == 0 {
+		return out
+	}
+	filtered := out[:0]
+	for _, snap := range out {
+		if _, ok := coreIDs[snap.UserID]; ok {
+			continue
+		}
+		filtered = append(filtered, snap)
+	}
+	return append(filtered, coreOut...)
 }
 
 func (c *xrayCore) AcknowledgeUsage() {
@@ -172,6 +183,33 @@ func (c *xrayCore) Presence() []Presence {
 	byID := map[string]Presence{}
 	for _, row := range out {
 		byID[row.UserID] = row
+	}
+	now := time.Now().UTC()
+	if c.inst != nil {
+		if feat := c.inst.GetFeature(stats.ManagerType()); feat != nil {
+			if mgr, ok := feat.(stats.Manager); ok && mgr != nil {
+				mgr.VisitOnlineMaps(func(name string, om stats.OnlineMap) bool {
+					parts := strings.Split(name, ">>>")
+					if len(parts) != 3 || parts[0] != "user" || parts[2] != "online" {
+						return true
+					}
+					id := c.policy.mapStatName(parts[1])
+					row := byID[id]
+					row.UserID = id
+					om.ForEach(func(ip string, unix int64) bool {
+						ip = publicPresenceIP(ip)
+						if ip == "" {
+							return true
+						}
+						row.Online = true
+						row.IPs = mergePresenceIP(row.IPs, presenceIPAt(ip, unix, now))
+						return true
+					})
+					byID[id] = row
+					return true
+				})
+			}
+		}
 	}
 	for id, n := range c.lastSeen {
 		prev := c.lastTraffic[id]
@@ -224,7 +262,7 @@ func (c *xrayCore) restartLocked() error {
 		c.rememberGood()
 		return nil
 	}
-	inst, err := xraycore.StartInstance("json", raw)
+	inst, err := startXrayInstance(raw, c.policy)
 	if err != nil {
 		c.restoreLastGood()
 		return err
@@ -257,7 +295,7 @@ func (c *xrayCore) restoreLastGood() {
 	if err != nil || n == 0 {
 		return
 	}
-	inst, err := xraycore.StartInstance("json", raw)
+	inst, err := startXrayInstance(raw, c.policy)
 	if err != nil {
 		return
 	}
@@ -289,6 +327,7 @@ func (c *xrayCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outboun
 	var items []map[string]any
 	var fronts []frontSpec
 	var policyTags []string
+	var skipIP []string
 	for i, in := range inbounds {
 		tag := in.ID
 		if tag == "" {
@@ -318,20 +357,24 @@ func (c *xrayCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outboun
 		if flow != "" {
 			liveClients = applyClientFlow(clients, flow)
 		}
-		internalPort, err := reserveLoopbackPort()
-		if err != nil {
-			return nil, 0, nil, err
-		}
-		item := map[string]any{
-			"tag":    tag,
-			"listen": "127.0.0.1",
-			"port":   internalPort,
-		}
-		if !identityFront(in, users) {
-			if stream := xrayStreamSettings(in); stream != nil {
-				item["streamSettings"] = stream
+		public := coreOwnedTLS(in, users)
+		var listenHosts []string
+		var listenPort int
+		if public {
+			listenHosts = FrontListenHosts(inboundStack(in), in.Listen)
+			if len(listenHosts) == 0 {
+				continue
 			}
+			listenPort = in.Port
+		} else {
+			internalPort, err := reserveLoopbackPort()
+			if err != nil {
+				return nil, 0, nil, err
+			}
+			listenHosts = []string{"127.0.0.1"}
+			listenPort = internalPort
 		}
+		item := map[string]any{}
 		if sniff := xraySniffing(in); sniff != nil {
 			item["sniffing"] = sniff
 		}
@@ -391,16 +434,40 @@ func (c *xrayCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outboun
 		default:
 			continue
 		}
-		items = append(items, item)
-		if policyExitNeeded(in, users) {
-			policyTags = append(policyTags, tag)
+		for hi, host := range listenHosts {
+			cloned := cloneAnyMap(item)
+			useTag := tag
+			if hi > 0 {
+				useTag = fmt.Sprintf("%s-%d", tag, hi)
+			}
+			cloned["tag"] = useTag
+			cloned["listen"] = host
+			cloned["port"] = listenPort
+			if !identityFront(in, users) {
+				stream := xrayStreamSettings(in)
+				if !public {
+					stream = enableXrayProxyProtocol(stream)
+				}
+				if stream != nil {
+					cloned["streamSettings"] = stream
+				}
+			}
+			items = append(items, cloned)
+			if identityFront(in, users) {
+				skipIP = append(skipIP, useTag)
+			}
+			if policyExitNeeded(in, users, true) {
+				policyTags = append(policyTags, useTag)
+			}
 		}
-		fronts = append(fronts, inboundPublicFronts(
-			in,
-			net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", internalPort)),
-			proto,
-			users,
-		)...)
+		if !public {
+			fronts = append(fronts, inboundPublicFronts(
+				in,
+				net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", listenPort)),
+				proto,
+				users,
+			)...)
+		}
 	}
 	obs := xrayOutbounds(outbounds)
 	rules := xrayRouteRules(routes, outbounds)
@@ -415,12 +482,13 @@ func (c *xrayCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outboun
 		items = append(items, coreIn...)
 		fronts = append(fronts, extra...)
 	}
+	c.policy.setSkipCoreIP(skipIP)
 	cfg := map[string]any{
 		"log":   map[string]any{"loglevel": "error"},
 		"stats": map[string]any{},
 		"policy": map[string]any{
 			"levels": map[string]any{
-				"0": map[string]any{"statsUserUplink": true, "statsUserDownlink": true},
+				"0": map[string]any{"statsUserUplink": true, "statsUserDownlink": true, "statsUserOnline": true},
 			},
 			"system": map[string]any{"statsInboundUplink": true, "statsInboundDownlink": true},
 		},
@@ -470,6 +538,50 @@ func xrayStreamSettings(in InboundSpec) map[string]any {
 	}
 	if len(stream) == 0 {
 		return nil
+	}
+	return stream
+}
+
+func enableXrayProxyProtocol(stream map[string]any) map[string]any {
+	if stream == nil {
+		stream = map[string]any{}
+	}
+	network := strings.ToLower(strings.TrimSpace(fmt.Sprint(stream["network"])))
+	if network == "<nil>" {
+		network = ""
+	}
+	switch network {
+	case "ws", "websocket":
+		ws, _ := stream["wsSettings"].(map[string]any)
+		if ws == nil {
+			ws = map[string]any{}
+		}
+		ws["acceptProxyProtocol"] = true
+		stream["wsSettings"] = ws
+	case "httpupgrade":
+		hu, _ := stream["httpupgradeSettings"].(map[string]any)
+		if hu == nil {
+			hu = map[string]any{}
+		}
+		hu["acceptProxyProtocol"] = true
+		stream["httpupgradeSettings"] = hu
+	case "grpc", "gun":
+		sock, _ := stream["sockopt"].(map[string]any)
+		if sock == nil {
+			sock = map[string]any{}
+		}
+		sock["acceptProxyProtocol"] = true
+		stream["sockopt"] = sock
+	default:
+		if network == "" {
+			stream["network"] = "tcp"
+		}
+		tcp, _ := stream["tcpSettings"].(map[string]any)
+		if tcp == nil {
+			tcp = map[string]any{}
+		}
+		tcp["acceptProxyProtocol"] = true
+		stream["tcpSettings"] = tcp
 	}
 	return stream
 }
@@ -604,6 +716,7 @@ func xrayOutboundItem(row OutboundSpec, tag string) map[string]any {
 		RealityPublicKey string `json:"reality_public_key"`
 		RealityShortID   string `json:"reality_short_id"`
 		SpiderX          string `json:"spider_x"`
+		PinnedCertSHA256 string `json:"pinned_peer_cert_sha256"`
 	}
 	_ = json.Unmarshal([]byte(row.SettingsJSON), &s)
 	proto := strings.ToLower(row.Protocol)
@@ -652,7 +765,7 @@ func xrayOutboundItem(row OutboundSpec, tag string) map[string]any {
 	default:
 		return nil
 	}
-	if stream := outboundStream(s.Transport, s.Security, s.SNI, s.Fingerprint, s.WSPath, s.WSHost, s.GRPCService, s.ViaOutbound, s.RealityPublicKey, s.RealityShortID, s.SpiderX); stream != nil {
+	if stream := outboundStream(s.Transport, s.Security, s.SNI, s.Fingerprint, s.WSPath, s.WSHost, s.GRPCService, s.ViaOutbound, s.RealityPublicKey, s.RealityShortID, s.SpiderX, s.PinnedCertSHA256); stream != nil {
 		item["streamSettings"] = stream
 	} else if s.ViaOutbound != "" {
 		item["streamSettings"] = map[string]any{"sockopt": map[string]any{"dialerProxy": s.ViaOutbound}}
@@ -660,7 +773,7 @@ func xrayOutboundItem(row OutboundSpec, tag string) map[string]any {
 	return item
 }
 
-func outboundStream(transport, security, sni, fingerprint, wsPath, wsHost, grpcService, via, realityPublicKey, realityShortID, spiderX string) map[string]any {
+func outboundStream(transport, security, sni, fingerprint, wsPath, wsHost, grpcService, via, realityPublicKey, realityShortID, spiderX, pinnedCertSHA256 string) map[string]any {
 	if transport == "" && security == "" && via == "" {
 		return nil
 	}
@@ -683,6 +796,9 @@ func outboundStream(transport, security, sni, fingerprint, wsPath, wsHost, grpcS
 			tls["fingerprint"] = fingerprint
 		}
 		if security == "tls" {
+			if pinnedCertSHA256 != "" {
+				tls["pinnedPeerCertSha256"] = pinnedCertSHA256
+			}
 			stream["tlsSettings"] = tls
 		} else {
 			if realityPublicKey != "" {

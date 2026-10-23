@@ -135,6 +135,7 @@ func TestXrayVLESSTLS(t *testing.T) {
 }
 
 func TestTLSVLESSQuotaDeviceAndPeerSession(t *testing.T) {
+	requireAltLoopback(t)
 	echo := startEcho(t)
 	defer echo.Close()
 	host, portStr, _ := net.SplitHostPort(echo.Addr().String())
@@ -164,8 +165,13 @@ func TestTLSVLESSQuotaDeviceAndPeerSession(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer alice.Close()
-			if _, err := vlessOpenTLS(addr, vlessAlice, host, destPort); err == nil {
-				t.Fatal("second tls device allowed")
+			same, err := vlessOpenTLS(addr, vlessAlice, host, destPort)
+			if err != nil {
+				t.Fatal("same ip extra conn")
+			}
+			same.Close()
+			if _, err := vlessOpenTLSFrom(addr, vlessAlice, host, destPort, "127.0.0.2"); err == nil {
+				t.Fatal("second tls ip allowed")
 			}
 			bob, err := vlessOpenTLS(addr, vlessBob, host, destPort)
 			if err != nil {
@@ -299,7 +305,15 @@ func TestXrayMixedSOCKSAndTLSMeter(t *testing.T) {
 }
 
 func vlessOpenTLS(addr, id, destHost string, destPort int) (net.Conn, error) {
-	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 3 * time.Second}, "tcp", addr, &tls.Config{InsecureSkipVerify: true})
+	return vlessOpenTLSFrom(addr, id, destHost, destPort, "")
+}
+
+func vlessOpenTLSFrom(addr, id, destHost string, destPort int, localIP string) (net.Conn, error) {
+	d := &net.Dialer{Timeout: 3 * time.Second}
+	if localIP != "" {
+		d.LocalAddr = &net.TCPAddr{IP: net.ParseIP(localIP)}
+	}
+	conn, err := tls.DialWithDialer(d, "tcp", addr, &tls.Config{InsecureSkipVerify: true})
 	if err != nil {
 		return nil, err
 	}

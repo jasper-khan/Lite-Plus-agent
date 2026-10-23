@@ -82,55 +82,62 @@ var (
 )
 
 type frontSpec struct {
-	Addr     string
-	Dest     string
-	Protocol string
-	Identity bool
-	Exit     bool
-	Egress   []egressHop
-	TLS      *tls.Config
-	Network  string
-	WSPath   string
+	Addr          string
+	Dest          string
+	Protocol      string
+	Identity      bool
+	Exit          bool
+	ProxyProtocol bool
+	Egress        []egressHop
+	TLS           *tls.Config
+	Network       string
+	WSPath        string
 }
 
 type policyEngine struct {
-	mu       sync.Mutex
-	users    []UserSpec
-	denied   map[string]struct{}
-	byLogin  map[string]UserSpec
-	byUUID   map[string]UserSpec
-	quota    *quota.Ledger
-	limit    *limiter.Set
-	sess     *sessions.Set
-	used     map[string]int64
-	acked    map[string]int64
-	captured map[string]int64
-	ips      map[string]map[string]time.Time
+	mu         sync.Mutex
+	users      []UserSpec
+	denied     map[string]struct{}
+	byLogin    map[string]UserSpec
+	byUUID     map[string]UserSpec
+	quota      *quota.Ledger
+	limit      *limiter.Set
+	sess       *sessions.Set
+	used       map[string]int64
+	acked      map[string]int64
+	captured   map[string]int64
+	ips        *ipGuard
+	seen       map[string]map[string]time.Time
+	skipCoreIP map[string]struct{}
 }
 
 type sharedExec struct {
 	quota *quota.Ledger
 	limit *limiter.Set
 	sess  *sessions.Set
+	ips   *ipGuard
 }
 
 var nodeExec = &sharedExec{
 	quota: quota.New(),
 	limit: limiter.New(),
 	sess:  sessions.New(),
+	ips:   newIPGuard(),
 }
 
 func newPolicyEngine() *policyEngine {
 	return &policyEngine{
-		denied:  map[string]struct{}{},
-		byLogin: map[string]UserSpec{},
-		byUUID:  map[string]UserSpec{},
-		quota:   nodeExec.quota,
-		limit:   nodeExec.limit,
-		sess:    nodeExec.sess,
-		used:    map[string]int64{},
-		acked:   map[string]int64{},
-		ips:     map[string]map[string]time.Time{},
+		denied:     map[string]struct{}{},
+		byLogin:    map[string]UserSpec{},
+		byUUID:     map[string]UserSpec{},
+		quota:      nodeExec.quota,
+		limit:      nodeExec.limit,
+		sess:       nodeExec.sess,
+		used:       map[string]int64{},
+		acked:      map[string]int64{},
+		ips:        nodeExec.ips,
+		seen:       map[string]map[string]time.Time{},
+		skipCoreIP: map[string]struct{}{},
 	}
 }
 
@@ -172,6 +179,7 @@ func (p *policyEngine) deny(userID string) {
 	}
 	p.mu.Unlock()
 	p.sess.CloseUser(userID)
+	p.ips.clear(userID)
 }
 
 func (p *policyEngine) lookup(user, pass string) (UserSpec, bool) {
@@ -193,13 +201,6 @@ func (p *policyEngine) lookup(user, pass string) (UserSpec, bool) {
 	return spec, true
 }
 
-func (p *policyEngine) allowDevice(userID string, limit int) bool {
-	if limit <= 0 {
-		return true
-	}
-	return p.sess.Count(userID) < limit
-}
-
 func (p *policyEngine) trackSession(sess *sessions.Session) {
 	if sess == nil {
 		return
@@ -218,13 +219,13 @@ func (p *policyEngine) noteIP(userID, ip string) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.ips == nil {
-		p.ips = map[string]map[string]time.Time{}
+	if p.seen == nil {
+		p.seen = map[string]map[string]time.Time{}
 	}
-	if p.ips[userID] == nil {
-		p.ips[userID] = map[string]time.Time{}
+	if p.seen[userID] == nil {
+		p.seen[userID] = map[string]time.Time{}
 	}
-	p.ips[userID][ip] = time.Now().UTC()
+	p.seen[userID][ip] = time.Now().UTC()
 }
 
 func (p *policyEngine) presence() []Presence {
@@ -233,7 +234,7 @@ func (p *policyEngine) presence() []Presence {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	ids := map[string]struct{}{}
-	for id := range p.ips {
+	for id := range p.seen {
 		ids[id] = struct{}{}
 	}
 	for id := range live {
@@ -247,7 +248,7 @@ func (p *policyEngine) presence() []Presence {
 	for id := range ids {
 		row := Presence{UserID: id, Online: counts[id] > 0 || len(live[id]) > 0}
 		seen := map[string]time.Time{}
-		for ip, at := range p.ips[id] {
+		for ip, at := range p.seen[id] {
 			seen[ip] = at
 		}
 		for _, ip := range live[id] {
@@ -338,12 +339,6 @@ func (p *policyEngine) ack() {
 	p.captured = nil
 }
 
-func (p *policyEngine) frontMetered(userID string) bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.used[userID] > 0 || p.acked[userID] > 0 || p.captured[userID] > 0
-}
-
 func (p *policyEngine) lookupUUID(id string) (UserSpec, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -364,6 +359,9 @@ func (p *policyEngine) mapStatName(name string) string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if spec, ok := p.byLogin[name]; ok {
+		return spec.ID
+	}
+	if spec, ok := p.byUUID[strings.ToLower(strings.TrimSpace(name))]; ok {
 		return spec.ID
 	}
 	for _, u := range p.users {
@@ -430,15 +428,12 @@ func coreOwnedTLS(in InboundSpec, users []UserSpec) bool {
 	return inboundPresentsTLS(in) && userFlowVision(users, in.ID)
 }
 
-func inboundUsesVision(in InboundSpec, users []UserSpec) bool {
-	return inboundVision(in) || userFlowVision(users, in.ID)
-}
-
-// policyExitNeeded is Reality/TLS without Vision. Vision splices to the
-// outbound; a SOCKS hop after it accepts TCP then fails HTTP (3x-ui uses
-// freedom). Quota for Vision comes from Xray user stats.
-func policyExitNeeded(in InboundSpec, users []UserSpec) bool {
-	return coreOwnedTLS(in, users) && !inboundUsesVision(in, users)
+// policyExitNeeded is the quota SOCKS hop after the core decrypts TLS.
+// Xray Reality/Vision bind the public port and go freedom (3x-ui); SOCKS
+// would accept TCP then drop HTTP/3. sing-box has no Vision splice, so it
+// still meters Reality through SOCKS.
+func policyExitNeeded(in InboundSpec, users []UserSpec, xray bool) bool {
+	return !xray && coreOwnedTLS(in, users)
 }
 
 func policyExitTag(userID string) string {
@@ -795,6 +790,7 @@ func attachPolicyExit(obs, rules []map[string]any, users []UserSpec, policyTags 
 				"server_port": port,
 				"username":    user,
 				"password":    pass,
+				"network":     "tcp",
 			})
 		}
 		added[tag] = struct{}{}
@@ -1004,14 +1000,16 @@ func newFrontSpec(listen, dest, proto string, in InboundSpec, users []UserSpec) 
 	if network == "websocket" {
 		network = "ws"
 	}
+	identity := identityFront(in, users)
 	return frontSpec{
-		Addr:     listen,
-		Dest:     dest,
-		Protocol: proto,
-		Identity: identityFront(in, users),
-		TLS:      inboundServerTLS(in),
-		Network:  network,
-		WSPath:   inboundWSPath(in),
+		Addr:          listen,
+		Dest:          dest,
+		Protocol:      proto,
+		Identity:      identity,
+		ProxyProtocol: !identity,
+		TLS:           inboundServerTLS(in),
+		Network:       network,
+		WSPath:        inboundWSPath(in),
 	}
 }
 
@@ -1045,14 +1043,14 @@ func startPolicyFronts(policy *policyEngine, specs []frontSpec) ([]*spliceFront,
 		case spec.Identity:
 			go serveIdentitySplice(front, spec.Dest, policy)
 		default:
-			go serveSplice(front, spec.Dest)
+			go serveSplice(front, spec)
 		}
 		started = append(started, front)
 	}
 	return started, nil
 }
 
-func serveSplice(front *spliceFront, dest string) {
+func serveSplice(front *spliceFront, spec frontSpec) {
 	for {
 		client, err := front.ln.Accept()
 		if err != nil {
@@ -1060,7 +1058,7 @@ func serveSplice(front *spliceFront, dest string) {
 		}
 		front.track(client)
 		front.spawn(func() {
-			backend, err := net.DialTimeout("tcp", dest, 2*time.Second)
+			backend, err := net.DialTimeout("tcp", spec.Dest, 2*time.Second)
 			if err != nil {
 				_ = client.Close()
 				return
@@ -1068,6 +1066,11 @@ func serveSplice(front *spliceFront, dest string) {
 			front.track(backend)
 			defer client.Close()
 			defer backend.Close()
+			if spec.ProxyProtocol {
+				if err := writeProxyProtocolV1(backend, client, backend); err != nil {
+					return
+				}
+			}
 			go io.Copy(backend, client)
 			io.Copy(client, backend)
 		})
@@ -1120,10 +1123,6 @@ func handlePolicyExitSOCKS(front *spliceFront, client net.Conn, policy *policyEn
 		_, _ = client.Write([]byte{0x01, 0x01})
 		return
 	}
-	if !policy.allowDevice(spec.ID, spec.DeviceLimit) {
-		_, _ = client.Write([]byte{0x01, 0x01})
-		return
-	}
 	if _, err := client.Write([]byte{0x01, 0x00}); err != nil {
 		return
 	}
@@ -1137,7 +1136,7 @@ func handlePolicyExitSOCKS(front *spliceFront, client net.Conn, policy *policyEn
 		return
 	}
 	sessID := fmt.Sprintf("%s-%d", spec.ID, time.Now().UnixNano())
-	policy.trackSession(&sessions.Session{ID: sessID, UserID: spec.ID, Conn: client})
+	policy.trackSession(&sessions.Session{ID: sessID, UserID: spec.ID, Conn: client, HideIP: true})
 	defer policy.sess.Remove(sessID)
 	backend, err := dialThroughEgress(hops, dest)
 	if err != nil {
@@ -1532,10 +1531,12 @@ func handleIdentitySOCKS(front *spliceFront, client net.Conn, dest string, polic
 		_, _ = client.Write([]byte{0x01, 0x01})
 		return
 	}
-	if !policy.allowDevice(spec.ID, spec.DeviceLimit) {
+	ip := connClientIP(client)
+	if !policy.holdIP(spec.ID, ip, spec.DeviceLimit) {
 		_, _ = client.Write([]byte{0x01, 0x01})
 		return
 	}
+	defer policy.releaseIP(spec.ID, ip)
 	sessID := fmt.Sprintf("%s-%d", spec.ID, time.Now().UnixNano())
 	policy.trackSession(&sessions.Session{ID: sessID, UserID: spec.ID, Conn: client})
 	defer policy.sess.Remove(sessID)
@@ -1643,9 +1644,11 @@ func handleIdentityVLESS(front *spliceFront, client net.Conn, dest string, polic
 	if !ok {
 		return
 	}
-	if !policy.allowDevice(spec.ID, spec.DeviceLimit) {
+	ip := connClientIP(client)
+	if !policy.holdIP(spec.ID, ip, spec.DeviceLimit) {
 		return
 	}
+	defer policy.releaseIP(spec.ID, ip)
 	sessID := fmt.Sprintf("%s-%d", spec.ID, time.Now().UnixNano())
 	policy.trackSession(&sessions.Session{ID: sessID, UserID: spec.ID, Conn: client})
 	defer policy.sess.Remove(sessID)

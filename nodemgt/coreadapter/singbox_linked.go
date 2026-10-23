@@ -170,6 +170,7 @@ func (c *singBoxCore) restartLocked() error {
 	c.inst = inst
 	c.cancel = cancel
 	c.policy.sync(c.users, c.denied)
+	c.inst.Router().AppendTracker(newIPLimitTracker(c.policy))
 	started, err := startPolicyFronts(c.policy, fronts)
 	if err != nil {
 		_ = c.stopLocked()
@@ -203,6 +204,7 @@ func (c *singBoxCore) restoreLastGood() {
 	c.inst = inst
 	c.cancel = cancel
 	c.policy.sync(c.lastUsers, c.denied)
+	c.inst.Router().AppendTracker(newIPLimitTracker(c.policy))
 	started, ferr := startPolicyFronts(c.policy, fronts)
 	if ferr == nil {
 		c.fronts = started
@@ -239,6 +241,7 @@ func (c *singBoxCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outb
 	var items []map[string]any
 	var fronts []frontSpec
 	var policyTags []string
+	var skipIP []string
 	for i, in := range inbounds {
 		tag := in.ID
 		if tag == "" {
@@ -262,7 +265,8 @@ func (c *singBoxCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outb
 		listenPort := in.Port
 		var pendingFronts []frontSpec
 		udp := udpInbound(proto)
-		if !udp {
+		public := udp || coreOwnedTLS(in, users)
+		if !public {
 			internalPort, err := reserveLoopbackPort()
 			if err != nil {
 				return nil, 0, nil, err
@@ -288,6 +292,9 @@ func (c *singBoxCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outb
 			}
 			if transport := singBoxTransport(in); transport != nil {
 				item["transport"] = transport
+			}
+			if len(pendingFronts) > 0 {
+				item["proxy_protocol"] = true
 			}
 		}
 		switch proto {
@@ -364,18 +371,23 @@ func (c *singBoxCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outb
 			item["users"] = ssUsers
 		}
 		listenHosts := []string{listenAddr}
-		if udp {
+		if public {
 			listenHosts = hosts
 		}
 		for hi, host := range listenHosts {
 			cloned := cloneAnyMap(item)
 			cloned["listen"] = host
+			useTag := tag
 			if hi > 0 {
-				cloned["tag"] = fmt.Sprintf("%s-%d", tag, hi)
+				useTag = fmt.Sprintf("%s-%d", tag, hi)
+				cloned["tag"] = useTag
 			}
 			items = append(items, cloned)
+			if identityFront(in, users) {
+				skipIP = append(skipIP, useTag)
+			}
 		}
-		if policyExitNeeded(in, users) {
+		if policyExitNeeded(in, users, false) {
 			policyTags = append(policyTags, tag)
 		}
 		if len(pendingFronts) > 0 {
@@ -383,7 +395,7 @@ func (c *singBoxCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outb
 		}
 	}
 	obs := singBoxOutbounds(outbounds)
-	rules := singBoxRouteRules(routes, outbounds)
+	rules := append(singBoxSniffRules(inbounds), singBoxRouteRules(routes, outbounds)...)
 	if len(policyTags) > 0 {
 		var extra []frontSpec
 		var coreIn []map[string]any
@@ -395,6 +407,7 @@ func (c *singBoxCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outb
 		items = append(items, coreIn...)
 		fronts = append(fronts, extra...)
 	}
+	c.policy.setSkipCoreIP(skipIP)
 	cfg := map[string]any{
 		"log":       map[string]any{"level": "error", "timestamp": false},
 		"inbounds":  items,
@@ -617,13 +630,30 @@ func singBoxOutboundTLS(settings map[string]any) map[string]any {
 	if settings == nil {
 		return nil
 	}
-	security, _ := settings["security"].(string)
-	if !strings.EqualFold(strings.TrimSpace(security), "tls") {
+	security := strings.ToLower(strings.TrimSpace(firstString(settings["security"])))
+	if security != "tls" && security != "reality" {
 		return nil
 	}
 	tls := map[string]any{"enabled": true}
 	if sni := strings.TrimSpace(firstString(settings["sni"])); sni != "" {
 		tls["server_name"] = sni
+	}
+	fp := strings.TrimSpace(firstString(settings["fingerprint"]))
+	if fp == "" && security == "reality" {
+		fp = "chrome"
+	}
+	if fp != "" {
+		tls["utls"] = map[string]any{"enabled": true, "fingerprint": fp}
+	}
+	if security == "reality" {
+		reality := map[string]any{"enabled": true}
+		if pk := strings.TrimSpace(firstString(settings["reality_public_key"])); pk != "" {
+			reality["public_key"] = pk
+		}
+		if sid := strings.TrimSpace(firstString(settings["reality_short_id"])); sid != "" {
+			reality["short_id"] = sid
+		}
+		tls["reality"] = reality
 	}
 	return tls
 }
@@ -653,10 +683,18 @@ func singBoxOutboundTransport(settings map[string]any) map[string]any {
 		return item
 	case "httpupgrade":
 		item := map[string]any{"type": "httpupgrade"}
-		if path, _ := settings["ws_path"].(string); path != "" {
+		path := firstString(settings["http_path"])
+		if path == "" {
+			path = firstString(settings["ws_path"])
+		}
+		if path != "" {
 			item["path"] = path
 		}
-		if host, _ := settings["ws_host"].(string); host != "" {
+		host := firstString(settings["http_host"])
+		if host == "" {
+			host = firstString(settings["ws_host"])
+		}
+		if host != "" {
 			item["host"] = host
 		}
 		return item
@@ -668,13 +706,36 @@ func singBoxOutboundTransport(settings map[string]any) map[string]any {
 func singBoxHandshake(dest string) map[string]any {
 	host, port, err := net.SplitHostPort(dest)
 	if err != nil {
-		return map[string]any{"server": dest}
+		return map[string]any{"server": dest, "server_port": 443}
 	}
 	item := map[string]any{"server": host}
 	if n, convErr := strconv.Atoi(port); convErr == nil && n > 0 {
 		item["server_port"] = n
+	} else {
+		item["server_port"] = 443
 	}
 	return item
+}
+
+func singBoxSniffRules(inbounds []InboundSpec) []map[string]any {
+	var out []map[string]any
+	for _, in := range inbounds {
+		var s struct {
+			Sniffing bool `json:"sniffing"`
+		}
+		if strings.TrimSpace(in.SettingsJSON) == "" {
+			continue
+		}
+		_ = json.Unmarshal([]byte(in.SettingsJSON), &s)
+		if !s.Sniffing || strings.TrimSpace(in.ID) == "" {
+			continue
+		}
+		out = append(out, map[string]any{
+			"inbound": []string{in.ID},
+			"action":  "sniff",
+		})
+	}
+	return out
 }
 
 func firstString(v any) string {
