@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -104,6 +105,7 @@ type policyEngine struct {
 	used     map[string]int64
 	acked    map[string]int64
 	captured map[string]int64
+	ips      map[string]map[string]time.Time
 }
 
 type sharedExec struct {
@@ -128,6 +130,7 @@ func newPolicyEngine() *policyEngine {
 		sess:    nodeExec.sess,
 		used:    map[string]int64{},
 		acked:   map[string]int64{},
+		ips:     map[string]map[string]time.Time{},
 	}
 }
 
@@ -195,6 +198,75 @@ func (p *policyEngine) allowDevice(userID string, limit int) bool {
 		return true
 	}
 	return p.sess.Count(userID) < limit
+}
+
+func (p *policyEngine) trackSession(sess *sessions.Session) {
+	if sess == nil {
+		return
+	}
+	p.sess.Add(sess)
+	if sess.IP != "" {
+		p.noteIP(sess.UserID, sess.IP)
+	}
+}
+
+func (p *policyEngine) noteIP(userID, ip string) {
+	userID = strings.TrimSpace(userID)
+	ip = strings.TrimSpace(ip)
+	if userID == "" || ip == "" {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.ips == nil {
+		p.ips = map[string]map[string]time.Time{}
+	}
+	if p.ips[userID] == nil {
+		p.ips[userID] = map[string]time.Time{}
+	}
+	p.ips[userID][ip] = time.Now().UTC()
+}
+
+func (p *policyEngine) presence() []Presence {
+	live := p.sess.LiveIPs()
+	counts := p.sess.OnlineCounts()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	ids := map[string]struct{}{}
+	for id := range p.ips {
+		ids[id] = struct{}{}
+	}
+	for id := range live {
+		ids[id] = struct{}{}
+	}
+	for id := range counts {
+		ids[id] = struct{}{}
+	}
+	out := make([]Presence, 0, len(ids))
+	now := time.Now().UTC()
+	for id := range ids {
+		row := Presence{UserID: id, Online: counts[id] > 0 || len(live[id]) > 0}
+		seen := map[string]time.Time{}
+		for ip, at := range p.ips[id] {
+			seen[ip] = at
+		}
+		for _, ip := range live[id] {
+			seen[ip] = now
+			row.Online = true
+		}
+		for ip, at := range seen {
+			row.IPs = append(row.IPs, PresenceIP{IP: ip, SeenAt: at})
+		}
+		sort.Slice(row.IPs, func(i, j int) bool {
+			if row.IPs[i].SeenAt.Equal(row.IPs[j].SeenAt) {
+				return row.IPs[i].IP < row.IPs[j].IP
+			}
+			return row.IPs[i].SeenAt.After(row.IPs[j].SeenAt)
+		})
+		out = append(out, row)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UserID < out[j].UserID })
+	return out
 }
 
 func (p *policyEngine) takeBytes(userID string, n int, stop <-chan struct{}) (int, bool) {
@@ -946,7 +1018,7 @@ func startPolicyFronts(policy *policyEngine, specs []frontSpec) ([]*spliceFront,
 	var started []*spliceFront
 	for _, spec := range specs {
 		spec := spec
-		ln, err := net.Listen("tcp", spec.Addr)
+		ln, err := listenFront(spec.Addr)
 		if err != nil {
 			for _, f := range started {
 				f.close()
@@ -1054,7 +1126,7 @@ func handlePolicyExitSOCKS(front *spliceFront, client net.Conn, policy *policyEn
 		return
 	}
 	sessID := fmt.Sprintf("%s-%d", spec.ID, time.Now().UnixNano())
-	policy.sess.Add(&sessions.Session{ID: sessID, UserID: spec.ID, Conn: client})
+	policy.trackSession(&sessions.Session{ID: sessID, UserID: spec.ID, Conn: client})
 	defer policy.sess.Remove(sessID)
 	backend, err := dialThroughEgress(hops, dest)
 	if err != nil {
@@ -1454,7 +1526,7 @@ func handleIdentitySOCKS(front *spliceFront, client net.Conn, dest string, polic
 		return
 	}
 	sessID := fmt.Sprintf("%s-%d", spec.ID, time.Now().UnixNano())
-	policy.sess.Add(&sessions.Session{ID: sessID, UserID: spec.ID, Conn: client})
+	policy.trackSession(&sessions.Session{ID: sessID, UserID: spec.ID, Conn: client})
 	defer policy.sess.Remove(sessID)
 	backend, err := net.DialTimeout("tcp", dest, 2*time.Second)
 	if err != nil {
@@ -1564,7 +1636,7 @@ func handleIdentityVLESS(front *spliceFront, client net.Conn, dest string, polic
 		return
 	}
 	sessID := fmt.Sprintf("%s-%d", spec.ID, time.Now().UnixNano())
-	policy.sess.Add(&sessions.Session{ID: sessID, UserID: spec.ID, Conn: client})
+	policy.trackSession(&sessions.Session{ID: sessID, UserID: spec.ID, Conn: client})
 	defer policy.sess.Remove(sessID)
 	backend, err := net.DialTimeout("tcp", dest, 2*time.Second)
 	if err != nil {

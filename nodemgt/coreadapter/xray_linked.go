@@ -56,7 +56,7 @@ func (c *xrayCore) Start(_ context.Context, inbounds []InboundSpec) error {
 	defer c.mu.Unlock()
 	prev := c.inbounds
 	c.inbounds = coreInbounds("xray", inbounds)
-	if err := c.restartLocked(); err != nil {
+	if err := c.applyIfChangedLocked(); err != nil {
 		c.inbounds = prev
 		return err
 	}
@@ -82,10 +82,7 @@ func (c *xrayCore) ApplyUsers(users []UserSpec) error {
 		}
 	}
 	c.policy.sync(c.users, c.denied)
-	if c.inst == nil && len(c.inbounds) == 0 {
-		return nil
-	}
-	return c.restartLocked()
+	return c.applyIfChangedLocked()
 }
 
 func (c *xrayCore) CloseUserSessions(userID string) error {
@@ -166,6 +163,42 @@ func (c *xrayCore) AcknowledgeUsage() {
 	for id, n := range c.lastSeen {
 		c.lastTraffic[id] = n
 	}
+}
+
+func (c *xrayCore) Presence() []Presence {
+	out := c.policy.presence()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	byID := map[string]Presence{}
+	for _, row := range out {
+		byID[row.UserID] = row
+	}
+	for id, n := range c.lastSeen {
+		prev := c.lastTraffic[id]
+		if n <= prev {
+			continue
+		}
+		row := byID[id]
+		row.UserID = id
+		row.Online = true
+		byID[id] = row
+	}
+	rows := make([]Presence, 0, len(byID))
+	for _, row := range byID {
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func (c *xrayCore) applyIfChangedLocked() error {
+	nextUsers := applyDenied(c.users, c.denied)
+	if !coreShouldRestart(c.inst != nil, c.inbounds, c.lastIn, nextUsers, c.lastUsers, c.outbounds, c.lastOut, c.routes, c.lastRoutes) {
+		if c.inst == nil && len(c.inbounds) == 0 {
+			c.rememberGood()
+		}
+		return nil
+	}
+	return c.restartLocked()
 }
 
 func (c *xrayCore) stopLocked() error {
@@ -257,10 +290,6 @@ func (c *xrayCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outboun
 	var fronts []frontSpec
 	var policyTags []string
 	for i, in := range inbounds {
-		listen := in.Listen
-		if listen == "" {
-			listen = "127.0.0.1"
-		}
 		tag := in.ID
 		if tag == "" {
 			tag = fmt.Sprintf("nodemgt-xray-%d", i)
@@ -366,13 +395,12 @@ func (c *xrayCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outboun
 		if coreOwnedTLS(in, users) {
 			policyTags = append(policyTags, tag)
 		}
-		fronts = append(fronts, newFrontSpec(
-			net.JoinHostPort(listen, fmt.Sprintf("%d", in.Port)),
+		fronts = append(fronts, inboundPublicFronts(
+			in,
 			net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", internalPort)),
 			proto,
-			in,
 			users,
-		))
+		)...)
 	}
 	obs := xrayOutbounds(outbounds)
 	rules := xrayRouteRules(routes, outbounds)
@@ -418,6 +446,14 @@ func xrayStreamSettings(in InboundSpec) map[string]any {
 		stream = map[string]any{"network": "tcp", "security": "tls"}
 	}
 	delete(stream, "stack")
+	if sockopt, ok := stream["sockopt"].(map[string]any); ok {
+		delete(sockopt, "v6only")
+		if len(sockopt) == 0 {
+			delete(stream, "sockopt")
+		} else {
+			stream["sockopt"] = sockopt
+		}
+	}
 	if in.CertPEM != "" && in.KeyPEM != "" {
 		tls, _ := stream["tlsSettings"].(map[string]any)
 		if tls == nil {

@@ -61,6 +61,17 @@ type Snapshot struct {
 	Bytes  int64
 }
 
+type PresenceIP struct {
+	IP     string
+	SeenAt time.Time
+}
+
+type Presence struct {
+	UserID string
+	Online bool
+	IPs    []PresenceIP
+}
+
 type Core interface {
 	Name() string
 	Version() string
@@ -71,6 +82,7 @@ type Core interface {
 	CloseUserSessions(userID string) error
 	TakeSnapshots() []Snapshot
 	AcknowledgeUsage()
+	Presence() []Presence
 }
 
 func All() []Core {

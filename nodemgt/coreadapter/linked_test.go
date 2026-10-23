@@ -409,3 +409,97 @@ func totalUser(snaps []Snapshot, id string) int64 {
 	}
 	return n
 }
+
+func TestUnchangedStartSkipsCoreRestart(t *testing.T) {
+	echo := startEcho(t)
+	defer echo.Close()
+	for _, tc := range []struct {
+		name string
+		core Core
+	}{
+		{"xray", NewXray()},
+		{"sing-box", NewSingBox()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			core := tc.core
+			defer core.Stop()
+			port := freePort(t)
+			users := []UserSpec{{ID: "u1", UUID: "alice", Password: "pw"}}
+			in := []InboundSpec{{ID: "socks", Core: core.Name(), Listen: "127.0.0.1", Port: port, Protocol: "socks"}}
+			if err := core.ApplyUsers(users); err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			if err := core.Start(ctx, in); err != nil {
+				t.Fatal(err)
+			}
+			addr := fmt.Sprintf("127.0.0.1:%d", port)
+			waitProxy(t, addr)
+			conn := socksDial(t, addr, "alice", "pw", echo.Addr().String())
+			defer conn.Close()
+			if !echoConn(conn, []byte("before")) {
+				t.Fatal("echo before reapply")
+			}
+			if err := core.ApplyUsers(users); err != nil {
+				t.Fatal(err)
+			}
+			if err := core.Start(ctx, in); err != nil {
+				t.Fatal(err)
+			}
+			if !echoConn(conn, []byte("after")) {
+				t.Fatal("unchanged apply restarted live inbound")
+			}
+		})
+	}
+}
+
+func TestSOCKSPresenceIncludesClientIP(t *testing.T) {
+	echo := startEcho(t)
+	defer echo.Close()
+	core := NewXray()
+	defer core.Stop()
+	port := freePort(t)
+	users := []UserSpec{{ID: "u1", UUID: "alice", Password: "pw"}}
+	if err := core.ApplyUsers(users); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.Start(context.Background(), []InboundSpec{{
+		ID: "socks", Core: "xray", Listen: "127.0.0.1", Port: port, Protocol: "socks",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	waitProxy(t, addr)
+	conn := socksDial(t, addr, "alice", "pw", echo.Addr().String())
+	defer conn.Close()
+	if !echoConn(conn, []byte("ip")) {
+		t.Fatal("echo")
+	}
+	found := false
+	for _, row := range core.Presence() {
+		if row.UserID != "u1" || !row.Online {
+			continue
+		}
+		for _, ip := range row.IPs {
+			if ip.IP == "127.0.0.1" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("presence %+v", core.Presence())
+	}
+}
+
+func socksDial(t *testing.T, addr, user, pass, dest string) net.Conn {
+	t.Helper()
+	dialer, err := proxy.SOCKS5("tcp", addr, &proxy.Auth{User: user, Password: pass}, &net.Dialer{Timeout: 2 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := dialer.Dial("tcp", dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return conn
+}

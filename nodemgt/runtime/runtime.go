@@ -574,6 +574,10 @@ func (r *Runtime) FlushUsage() {
 		}
 		items = mergeUsageItems(snaps)
 		if len(items) == 0 {
+			r.flushPresence()
+			for _, core := range r.cores {
+				core.AcknowledgeUsage()
+			}
 			return
 		}
 		pending = &pendingUsage{BatchID: fmt.Sprintf("%d", time.Now().UnixNano()), Items: items}
@@ -605,6 +609,7 @@ func (r *Runtime) FlushUsage() {
 			}
 		}
 	}
+	r.flushPresence()
 	for _, core := range r.cores {
 		core.AcknowledgeUsage()
 	}
@@ -628,6 +633,71 @@ func (r *Runtime) FlushUsage() {
 			}
 		}
 	}
+}
+
+func (r *Runtime) flushPresence() {
+	send := r.sender
+	r.mu.Lock()
+	result := r.result
+	if send == nil && result != nil {
+		send = func(method string, params any) error {
+			result(method, params)
+			return nil
+		}
+	}
+	r.mu.Unlock()
+	if send == nil {
+		return
+	}
+	byUser := map[string]coreadapter.Presence{}
+	for _, core := range r.cores {
+		for _, row := range core.Presence() {
+			if row.UserID == "" {
+				continue
+			}
+			prev := byUser[row.UserID]
+			prev.UserID = row.UserID
+			prev.Online = prev.Online || row.Online
+			prev.IPs = mergePresenceIPs(prev.IPs, row.IPs)
+			byUser[row.UserID] = prev
+		}
+	}
+	if len(byUser) == 0 {
+		return
+	}
+	users := make([]map[string]any, 0, len(byUser))
+	for _, row := range byUser {
+		ips := make([]map[string]any, 0, len(row.IPs))
+		for _, ip := range row.IPs {
+			ips = append(ips, map[string]any{"ip": ip.IP, "seen_at": ip.SeenAt.UTC().Format(time.RFC3339)})
+		}
+		users = append(users, map[string]any{
+			"user_id": row.UserID,
+			"online":  row.Online,
+			"ips":     ips,
+		})
+	}
+	if err := send(v2.MethodNodemgtPresence, map[string]any{"users": users}); err != nil {
+		log.Printf("nodemgt presence send: %v", err)
+	}
+}
+
+func mergePresenceIPs(a, b []coreadapter.PresenceIP) []coreadapter.PresenceIP {
+	seen := map[string]coreadapter.PresenceIP{}
+	for _, ip := range append(append([]coreadapter.PresenceIP(nil), a...), b...) {
+		if ip.IP == "" {
+			continue
+		}
+		prev, ok := seen[ip.IP]
+		if !ok || ip.SeenAt.After(prev.SeenAt) {
+			seen[ip.IP] = ip
+		}
+	}
+	out := make([]coreadapter.PresenceIP, 0, len(seen))
+	for _, ip := range seen {
+		out = append(out, ip)
+	}
+	return out
 }
 
 func (r *Runtime) pendingUsagePath() string {

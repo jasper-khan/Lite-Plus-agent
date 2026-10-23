@@ -56,7 +56,7 @@ func (c *singBoxCore) Start(_ context.Context, inbounds []InboundSpec) error {
 	defer c.mu.Unlock()
 	prev := c.inbounds
 	c.inbounds = coreInbounds("sing-box", inbounds)
-	if err := c.restartLocked(); err != nil {
+	if err := c.applyIfChangedLocked(); err != nil {
 		c.inbounds = prev
 		return err
 	}
@@ -82,10 +82,7 @@ func (c *singBoxCore) ApplyUsers(users []UserSpec) error {
 		}
 	}
 	c.policy.sync(c.users, c.denied)
-	if c.inst == nil && len(c.inbounds) == 0 {
-		return nil
-	}
-	return c.restartLocked()
+	return c.applyIfChangedLocked()
 }
 
 func (c *singBoxCore) CloseUserSessions(userID string) error {
@@ -121,6 +118,21 @@ func (c *singBoxCore) TakeSnapshots() []Snapshot {
 
 func (c *singBoxCore) AcknowledgeUsage() {
 	c.policy.ack()
+}
+
+func (c *singBoxCore) Presence() []Presence {
+	return c.policy.presence()
+}
+
+func (c *singBoxCore) applyIfChangedLocked() error {
+	nextUsers := applyDenied(c.users, c.denied)
+	if !coreShouldRestart(c.inst != nil, c.inbounds, c.lastIn, nextUsers, c.lastUsers, c.outbounds, c.lastOut, c.routes, c.lastRoutes) {
+		if c.inst == nil && len(c.inbounds) == 0 {
+			c.rememberGood()
+		}
+		return nil
+	}
+	return c.restartLocked()
 }
 
 func (c *singBoxCore) stopLocked() error {
@@ -228,10 +240,6 @@ func (c *singBoxCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outb
 	var fronts []frontSpec
 	var policyTags []string
 	for i, in := range inbounds {
-		listen := in.Listen
-		if listen == "" {
-			listen = "127.0.0.1"
-		}
 		tag := in.ID
 		if tag == "" {
 			tag = fmt.Sprintf("nodemgt-singbox-%d", i)
@@ -246,24 +254,27 @@ func (c *singBoxCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outb
 			continue
 		}
 		granted := usersForInbound(users, in.ID)
-		listenAddr := listen
+		hosts := FrontListenHosts(inboundStack(in), in.Listen)
+		if len(hosts) == 0 {
+			continue
+		}
+		listenAddr := hosts[0]
 		listenPort := in.Port
-		var pendingFront *frontSpec
-		if identityFront(in, users) {
+		var pendingFronts []frontSpec
+		udp := udpInbound(proto)
+		if !udp {
 			internalPort, err := reserveLoopbackPort()
 			if err != nil {
 				return nil, 0, nil, err
 			}
 			listenAddr = "127.0.0.1"
 			listenPort = internalPort
-			spec := newFrontSpec(
-				net.JoinHostPort(listen, fmt.Sprintf("%d", in.Port)),
+			pendingFronts = inboundPublicFronts(
+				in,
 				net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", internalPort)),
 				proto,
-				in,
 				users,
 			)
-			pendingFront = &spec
 		}
 		item := map[string]any{
 			"type":        proto,
@@ -352,12 +363,23 @@ func (c *singBoxCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outb
 			}
 			item["users"] = ssUsers
 		}
-		items = append(items, item)
+		listenHosts := []string{listenAddr}
+		if udp {
+			listenHosts = hosts
+		}
+		for hi, host := range listenHosts {
+			cloned := cloneAnyMap(item)
+			cloned["listen"] = host
+			if hi > 0 {
+				cloned["tag"] = fmt.Sprintf("%s-%d", tag, hi)
+			}
+			items = append(items, cloned)
+		}
 		if coreOwnedTLS(in, users) {
 			policyTags = append(policyTags, tag)
 		}
-		if pendingFront != nil {
-			fronts = append(fronts, *pendingFront)
+		if len(pendingFronts) > 0 {
+			fronts = append(fronts, pendingFronts...)
 		}
 	}
 	obs := singBoxOutbounds(outbounds)
@@ -671,4 +693,13 @@ func firstString(v any) string {
 		}
 	}
 	return ""
+}
+
+func udpInbound(proto string) bool {
+	switch strings.ToLower(strings.TrimSpace(proto)) {
+	case "hysteria2", "tuic":
+		return true
+	default:
+		return false
+	}
 }

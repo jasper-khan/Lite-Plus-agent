@@ -123,6 +123,29 @@ func (n *Native) CloseUserSessions(userID string) error {
 
 func (n *Native) AcknowledgeUsage() {}
 
+func (n *Native) Presence() []Presence {
+	live := n.sess.LiveIPs()
+	counts := n.sess.OnlineCounts()
+	ids := map[string]struct{}{}
+	for id := range live {
+		ids[id] = struct{}{}
+	}
+	for id := range counts {
+		ids[id] = struct{}{}
+	}
+	out := make([]Presence, 0, len(ids))
+	now := time.Now().UTC()
+	for id := range ids {
+		row := Presence{UserID: id, Online: counts[id] > 0}
+		for _, ip := range live[id] {
+			row.IPs = append(row.IPs, PresenceIP{IP: ip, SeenAt: now})
+			row.Online = true
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
 func (n *Native) TakeSnapshots() []Snapshot {
 	m := n.quota.Snapshot()
 	out := make([]Snapshot, 0, len(m))

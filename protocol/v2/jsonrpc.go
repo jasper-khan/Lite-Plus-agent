@@ -31,6 +31,7 @@ const (
 	MethodNodemgtControl       = "nodemgt.control"
 	MethodNodemgtControlResult = "nodemgt.controlResult"
 	MethodNodemgtUsage         = "nodemgt.usage"
+	MethodNodemgtPresence      = "nodemgt.presence"
 
 	CapabilityMCPFull = "mcp_full"
 	MCPFullVersion    = 1
