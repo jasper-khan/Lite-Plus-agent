@@ -131,3 +131,43 @@ func (p *policyEngine) skipCoreIPTag(tag string) bool {
 	_, ok := p.skipCoreIP[tag]
 	return ok
 }
+
+func (p *policyEngine) setMeterCore(tags []string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.meterCore = map[string]struct{}{}
+	for _, tag := range tags {
+		if tag != "" {
+			p.meterCore[tag] = struct{}{}
+		}
+	}
+}
+
+func (p *policyEngine) meterCoreTag(tag string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, ok := p.meterCore[tag]
+	return ok
+}
+
+func (p *policyEngine) liveQuota(userID string) bool {
+	return p.quota.Room(userID) >= 0
+}
+
+func (p *policyEngine) accountLinkBytes(userID string, n int) bool {
+	if n <= 0 {
+		return true
+	}
+	if p.quota.Room(userID) == 0 {
+		p.deny(userID)
+		return false
+	}
+	if _, ok := p.takeBytes(userID, n, nil); !ok {
+		p.deny(userID)
+		return false
+	}
+	if p.quota.Room(userID) == 0 {
+		p.deny(userID)
+	}
+	return true
+}

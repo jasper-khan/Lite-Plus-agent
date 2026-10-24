@@ -115,10 +115,83 @@ func TestXrayTLSVisionConnectAndPolicy(t *testing.T) {
 		if err := core.CloseUserSessions("u1"); err != nil {
 			t.Fatal(err)
 		}
+		if echoConn(alice, []byte("dead")) {
+			t.Fatal("revoked vision session still alive")
+		}
 		if !echoConn(bob, []byte("stay")) {
 			t.Fatal("healthy vision session dropped")
 		}
+		if cli, conn, err := xrayDial(port, vlessAlice, "xtls-rprx-vision", "tls", "", pin, tlsEcho.Addr().String()); err == nil {
+			conn.Close()
+			cli.Close()
+			t.Fatal("revoked vision user reconnect allowed")
+		}
+		if err := core.ApplyUsers([]UserSpec{
+			{ID: "u1", UUID: vlessAlice, Password: "pw", DeviceLimit: 1, Disabled: true},
+			{ID: "u2", UUID: vlessBob, Password: "pw"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := core.Start(context.Background(), []InboundSpec{{
+			ID: "tls", Core: "xray", Listen: "127.0.0.1", Port: port, Protocol: "vless",
+			CertPEM: certPEM, KeyPEM: keyPEM, Flow: "xtls-rprx-vision",
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		if cli, conn, err := xrayDial(port, vlessAlice, "xtls-rprx-vision", "tls", "", pin, tlsEcho.Addr().String()); err == nil {
+			conn.Close()
+			cli.Close()
+			t.Fatal("disabled vision user reconnect allowed")
+		}
+		if !echoConn(bob, []byte("still")) {
+			t.Fatal("healthy vision session dropped after disable")
+		}
 	})
+}
+
+func TestXrayTLSVisionLiveQuota(t *testing.T) {
+	certPEM, keyPEM, pin := auditCerts(t)
+	tlsEcho := startTLSEcho(t, certPEM, keyPEM)
+	defer tlsEcho.Close()
+	core := NewXray()
+	defer core.Stop()
+	if err := core.ApplyUsers([]UserSpec{
+		{ID: "u1", UUID: vlessAlice, Password: "pw", QuotaBytes: 8192, Flow: "xtls-rprx-vision"},
+		{ID: "u2", UUID: vlessBob, Password: "pw", QuotaBytes: 1 << 20, Flow: "xtls-rprx-vision"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	port := freePort(t)
+	if err := core.Start(context.Background(), []InboundSpec{{
+		ID: "tls", Core: "xray", Listen: "127.0.0.1", Port: port, Protocol: "vless",
+		CertPEM: certPEM, KeyPEM: keyPEM,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	waitProxy(t, fmt.Sprintf("127.0.0.1:%d", port))
+	aliceCli, alice, err := xrayDial(port, vlessAlice, "xtls-rprx-vision", "tls", "", pin, tlsEcho.Addr().String())
+	if err != nil {
+		t.Fatalf("vision connect: %v", err)
+	}
+	defer aliceCli.Close()
+	defer alice.Close()
+	bobCli, bob, err := xrayDial(port, vlessBob, "xtls-rprx-vision", "tls", "", pin, tlsEcho.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bobCli.Close()
+	defer bob.Close()
+	if echoConn(alice, make([]byte, 65536)) {
+		t.Fatal("vision quota allowed 64KiB before usage flush")
+	}
+	if !echoConn(bob, []byte("stay")) {
+		t.Fatal("healthy vision session dropped")
+	}
+	if cli, conn, err := xrayDial(port, vlessAlice, "xtls-rprx-vision", "tls", "", pin, tlsEcho.Addr().String()); err == nil {
+		conn.Close()
+		cli.Close()
+		t.Fatal("exhausted vision user reconnect allowed")
+	}
 }
 
 func TestRealityQuotaDeviceAndPeerSession(t *testing.T) {

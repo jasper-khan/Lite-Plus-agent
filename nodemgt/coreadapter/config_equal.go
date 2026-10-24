@@ -51,8 +51,13 @@ func userAuthKey(u UserSpec) string {
 	return strings.Join([]string{
 		u.ID, u.UUID, u.Password, u.Flow,
 		strconv.FormatBool(u.Disabled), strconv.FormatBool(u.Expired),
+		strconv.FormatBool(quotaExhausted(u)),
 		strings.Join(ids, ","),
 	}, "\x00")
+}
+
+func quotaExhausted(u UserSpec) bool {
+	return u.QuotaBytes > 0 && u.UsedBytes >= u.QuotaBytes
 }
 
 func outboundSpecsEqual(a, b []OutboundSpec) bool {
@@ -81,7 +86,7 @@ func routeSpecsEqual(a, b []RouteSpec) bool {
 	}
 	left := append([]RouteSpec(nil), a...)
 	right := append([]RouteSpec(nil), b...)
-	sort.Slice(left, func(i, j int) bool { return left[i].ID < right[i].ID })
+	sort.Slice(left, func(i, j int) bool { return left[i].ID < left[j].ID })
 	sort.Slice(right, func(i, j int) bool { return right[i].ID < right[j].ID })
 	for i := range left {
 		if routeSpecKey(left[i]) != routeSpecKey(right[i]) {

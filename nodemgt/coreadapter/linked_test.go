@@ -120,6 +120,108 @@ func TestDualCoreSOCKSPersonalControl(t *testing.T) {
 	}
 }
 
+func TestMixedUserQuotaRestoreRestoresAuth(t *testing.T) {
+	echo := startEcho(t)
+	defer echo.Close()
+	echoAddr := echo.Addr().String()
+	for _, maker := range []func() Core{NewXray, NewSingBox} {
+		core := maker()
+		t.Run(core.Name(), func(t *testing.T) {
+			defer core.Stop()
+			port := freePort(t)
+			users := []UserSpec{
+				{ID: "u1", UUID: "alice", Password: "pw1", QuotaBytes: 64, UsedBytes: 64},
+				{ID: "u2", UUID: "bob", Password: "pw2"},
+			}
+			if err := core.ApplyUsers(users); err != nil {
+				t.Fatal(err)
+			}
+			if err := core.Start(context.Background(), []InboundSpec{{
+				ID: "socks", Core: core.Name(), Listen: "127.0.0.1", Port: port, Protocol: "socks",
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			addr := fmt.Sprintf("127.0.0.1:%d", port)
+			waitProxy(t, addr)
+			if _, err := socksTry(addr, "alice", "pw1", echoAddr); err == nil {
+				t.Fatal("exhausted user authenticated")
+			}
+			bob, err := socksTry(addr, "bob", "pw2", echoAddr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer bob.Close()
+			if !echoConn(bob, []byte("bob")) {
+				t.Fatal("live peer echo")
+			}
+			users[0].UsedBytes = 0
+			if err := core.ApplyUsers(users); err != nil {
+				t.Fatal(err)
+			}
+			if err := core.Start(context.Background(), []InboundSpec{{
+				ID: "socks", Core: core.Name(), Listen: "127.0.0.1", Port: port, Protocol: "socks",
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			waitProxy(t, addr)
+			alice, err := socksTry(addr, "alice", "pw1", echoAddr)
+			if err != nil {
+				t.Fatal("quota restore did not restore auth")
+			}
+			defer alice.Close()
+			if !echoConn(alice, []byte("alice")) {
+				t.Fatal("restored user echo")
+			}
+			if _, err := socksTry(addr, "bob", "pw2", echoAddr); err != nil {
+				t.Fatal("peer lost after quota restore")
+			}
+		})
+	}
+}
+
+func TestUnchangedNonIDOrderedRoutesKeepSession(t *testing.T) {
+	echo := startEcho(t)
+	defer echo.Close()
+	echoAddr := echo.Addr().String()
+	routes := []RouteSpec{
+		{ID: "z-route", Priority: 10, RuleJSON: `{}`, Enabled: false},
+		{ID: "a-route", Priority: 20, RuleJSON: `{}`, Enabled: false},
+	}
+	for _, maker := range []func() Core{NewXray, NewSingBox} {
+		core := maker()
+		t.Run(core.Name(), func(t *testing.T) {
+			defer core.Stop()
+			setForwarding(t, core, nil, routes)
+			port := freePort(t)
+			users := []UserSpec{{ID: "u1", UUID: "alice", Password: "pw1"}}
+			if err := core.ApplyUsers(users); err != nil {
+				t.Fatal(err)
+			}
+			if err := core.Start(context.Background(), []InboundSpec{{
+				ID: "socks", Core: core.Name(), Listen: "127.0.0.1", Port: port, Protocol: "socks",
+			}}); err != nil {
+				t.Fatal(err)
+			}
+			addr := fmt.Sprintf("127.0.0.1:%d", port)
+			waitProxy(t, addr)
+			conn, err := socksTry(addr, "alice", "pw1", echoAddr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			if !echoConn(conn, []byte("before")) {
+				t.Fatal("before reapply")
+			}
+			if err := core.ApplyUsers(users); err != nil {
+				t.Fatal(err)
+			}
+			if !echoConn(conn, []byte("after!")) {
+				t.Fatal("unchanged routes restarted live session")
+			}
+		})
+	}
+}
+
 func TestDualCoreSOCKSQuotaDeviceAndPeerSession(t *testing.T) {
 	requireAltLoopback(t)
 	echo := startEcho(t)

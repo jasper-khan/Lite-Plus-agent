@@ -109,6 +109,8 @@ type policyEngine struct {
 	ips        *ipGuard
 	seen       map[string]map[string]time.Time
 	skipCoreIP map[string]struct{}
+	meterCore  map[string]struct{}
+	coreConns  map[string]map[net.Conn]struct{}
 }
 
 type sharedExec struct {
@@ -138,6 +140,7 @@ func newPolicyEngine() *policyEngine {
 		ips:        nodeExec.ips,
 		seen:       map[string]map[string]time.Time{},
 		skipCoreIP: map[string]struct{}{},
+		meterCore:  map[string]struct{}{},
 	}
 }
 
@@ -180,6 +183,61 @@ func (p *policyEngine) deny(userID string) {
 	p.mu.Unlock()
 	p.sess.CloseUser(userID)
 	p.ips.clear(userID)
+	p.dropCoreConns(userID)
+}
+
+func (p *policyEngine) userBlocked(userID string) bool {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, ok := p.denied[userID]; ok {
+		return true
+	}
+	for _, u := range p.users {
+		if u.ID == userID {
+			return !userLive(u)
+		}
+	}
+	return false
+}
+
+func (p *policyEngine) trackCoreConn(userID string, conn net.Conn) func() {
+	if userID == "" || conn == nil {
+		return func() {}
+	}
+	p.mu.Lock()
+	if p.coreConns == nil {
+		p.coreConns = map[string]map[net.Conn]struct{}{}
+	}
+	if p.coreConns[userID] == nil {
+		p.coreConns[userID] = map[net.Conn]struct{}{}
+	}
+	p.coreConns[userID][conn] = struct{}{}
+	p.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			p.mu.Lock()
+			delete(p.coreConns[userID], conn)
+			if len(p.coreConns[userID]) == 0 {
+				delete(p.coreConns, userID)
+			}
+			p.mu.Unlock()
+		})
+	}
+}
+
+func (p *policyEngine) dropCoreConns(userID string) {
+	p.mu.Lock()
+	conns := p.coreConns[userID]
+	delete(p.coreConns, userID)
+	p.mu.Unlock()
+	for conn := range conns {
+		_ = conn.Close()
+	}
 }
 
 func (p *policyEngine) lookup(user, pass string) (UserSpec, bool) {
@@ -415,6 +473,9 @@ func inboundPresentsTLS(in InboundSpec) bool {
 
 func coreOwnedTLS(in InboundSpec, users []UserSpec) bool {
 	p := strings.ToLower(strings.TrimSpace(in.Protocol))
+	if p == "anytls" {
+		return inboundPresentsTLS(in)
+	}
 	if p != "vless" {
 		return false
 	}

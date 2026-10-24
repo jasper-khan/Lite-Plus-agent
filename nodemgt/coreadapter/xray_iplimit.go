@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"time"
 	"unsafe"
 
+	"github.com/xtls/xray-core/common"
+	"github.com/xtls/xray-core/common/buf"
 	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/common/session"
 	xraycore "github.com/xtls/xray-core/core"
@@ -15,6 +18,7 @@ import (
 	"github.com/xtls/xray-core/features/inbound"
 	"github.com/xtls/xray-core/features/outbound"
 	"github.com/xtls/xray-core/features/routing"
+	"github.com/xtls/xray-core/proxy"
 	"github.com/xtls/xray-core/transport"
 	"github.com/xtls/xray-core/transport/internet"
 )
@@ -28,7 +32,7 @@ func (d *ipLimitDispatcher) Dispatch(ctx context.Context, dest xnet.Destination)
 	restoreXraySystemDialer()
 	release, ok := d.hold(ctx)
 	if !ok {
-		return nil, fmt.Errorf("ip limit")
+		return nil, fmt.Errorf("user denied")
 	}
 	link, err := d.Dispatcher.Dispatch(ctx, dest)
 	if err != nil {
@@ -37,6 +41,7 @@ func (d *ipLimitDispatcher) Dispatch(ctx context.Context, dest xnet.Destination)
 		}
 		return nil, err
 	}
+	d.meterLink(ctx, link)
 	return link, nil
 }
 
@@ -44,8 +49,13 @@ func (d *ipLimitDispatcher) DispatchLink(ctx context.Context, dest xnet.Destinat
 	restoreXraySystemDialer()
 	release, ok := d.hold(ctx)
 	if !ok {
-		return fmt.Errorf("ip limit")
+		if link != nil {
+			common.Close(link.Writer)
+			common.Interrupt(link.Reader)
+		}
+		return fmt.Errorf("user denied")
 	}
+	d.meterLink(ctx, link)
 	if err := d.Dispatcher.DispatchLink(ctx, dest, link); err != nil {
 		if release != nil {
 			release()
@@ -55,32 +65,150 @@ func (d *ipLimitDispatcher) DispatchLink(ctx context.Context, dest xnet.Destinat
 	return nil
 }
 
+func (d *ipLimitDispatcher) meterLink(ctx context.Context, link *transport.Link) {
+	if link == nil || d.policy == nil {
+		return
+	}
+	inbound := session.InboundFromContext(ctx)
+	if inbound == nil || inbound.User == nil || inbound.User.Email == "" {
+		return
+	}
+	if !d.policy.meterCoreTag(inbound.Tag) {
+		return
+	}
+	userID := d.policy.mapStatName(inbound.User.Email)
+	if userID == "" || !d.policy.liveQuota(userID) {
+		return
+	}
+	inbound.CanSpliceCopy = 3
+	for _, outbound := range session.OutboundsFromContext(ctx) {
+		if outbound != nil {
+			outbound.CanSpliceCopy = 3
+		}
+	}
+	link.Reader, link.Writer = wrapQuotaIO(d.policy, userID, link.Reader, link.Writer)
+}
+
+type quotaReader struct {
+	buf.Reader
+	userID string
+	policy *policyEngine
+}
+
+func (r *quotaReader) ReadMultiBuffer() (buf.MultiBuffer, error) {
+	mb, err := r.Reader.ReadMultiBuffer()
+	return r.account(mb, err)
+}
+
+func (r *quotaReader) ReadMultiBufferTimeout(d time.Duration) (buf.MultiBuffer, error) {
+	tr, ok := r.Reader.(buf.TimeoutReader)
+	if !ok {
+		return r.ReadMultiBuffer()
+	}
+	mb, err := tr.ReadMultiBufferTimeout(d)
+	return r.account(mb, err)
+}
+
+func (r *quotaReader) Interrupt() {
+	common.Interrupt(r.Reader)
+}
+
+func (r *quotaReader) account(mb buf.MultiBuffer, err error) (buf.MultiBuffer, error) {
+	if n := int(mb.Len()); n > 0 && !r.policy.accountLinkBytes(r.userID, n) {
+		buf.ReleaseMulti(mb)
+		return nil, fmt.Errorf("quota exceeded")
+	}
+	return mb, err
+}
+
+type quotaWriter struct {
+	buf.Writer
+	userID string
+	policy *policyEngine
+}
+
+func (w *quotaWriter) WriteMultiBuffer(mb buf.MultiBuffer) error {
+	if n := int(mb.Len()); n > 0 && !w.policy.accountLinkBytes(w.userID, n) {
+		buf.ReleaseMulti(mb)
+		return fmt.Errorf("quota exceeded")
+	}
+	return w.Writer.WriteMultiBuffer(mb)
+}
+
+func wrapQuotaIO(policy *policyEngine, userID string, r buf.Reader, w buf.Writer) (buf.Reader, buf.Writer) {
+	if r != nil {
+		r = &quotaReader{Reader: r, policy: policy, userID: userID}
+	}
+	if w != nil {
+		w = &quotaWriter{Writer: w, policy: policy, userID: userID}
+	}
+	return r, w
+}
+
 func (d *ipLimitDispatcher) hold(ctx context.Context) (func(), bool) {
 	inbound := session.InboundFromContext(ctx)
 	if inbound == nil || inbound.User == nil || inbound.User.Email == "" {
 		return nil, true
 	}
+	userID := d.policy.mapStatName(inbound.User.Email)
+	if userID != "" && d.policy.userBlocked(userID) {
+		return nil, false
+	}
 	if d.policy.skipCoreIPTag(inbound.Tag) {
 		return nil, true
 	}
-	userID := d.policy.mapStatName(inbound.User.Email)
+	var releases []func()
+	if inbound.Conn != nil && userID != "" {
+		releases = append(releases, d.policy.trackCoreConn(userID, inbound.Conn))
+	}
 	limit := d.policy.ipLimit(userID)
-	if limit <= 0 {
+	if limit > 0 {
+		ip := ""
+		if inbound.Source.Address != nil {
+			ip = inbound.Source.Address.String()
+		}
+		if !d.policy.holdIP(userID, ip, limit) {
+			for _, release := range releases {
+				release()
+			}
+			return nil, false
+		}
+		var once sync.Once
+		releases = append(releases, func() { once.Do(func() { d.policy.releaseIP(userID, ip) }) })
+	}
+	if len(releases) == 0 {
 		return nil, true
 	}
-	ip := ""
-	if inbound.Source.Address != nil {
-		ip = inbound.Source.Address.String()
-	}
-	if !d.policy.holdIP(userID, ip, limit) {
-		return nil, false
-	}
-	var once sync.Once
 	release := func() {
-		once.Do(func() { d.policy.releaseIP(userID, ip) })
+		for _, fn := range releases {
+			fn()
+		}
 	}
 	context.AfterFunc(ctx, release)
 	return release, true
+}
+
+func removeXrayUser(inst *xraycore.Instance, email string) {
+	if inst == nil || email == "" {
+		return
+	}
+	feat := inst.GetFeature(inbound.ManagerType())
+	mgr, ok := feat.(inbound.Manager)
+	if !ok || mgr == nil {
+		return
+	}
+	ctx := context.Background()
+	for _, h := range mgr.ListHandlers(ctx) {
+		gi, ok := h.(proxy.GetInbound)
+		if !ok {
+			continue
+		}
+		um, ok := gi.GetInbound().(proxy.UserManager)
+		if !ok {
+			continue
+		}
+		_ = um.RemoveUser(ctx, email)
+	}
 }
 
 var liveXrayDialer struct {

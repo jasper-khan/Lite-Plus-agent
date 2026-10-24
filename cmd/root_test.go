@@ -70,13 +70,13 @@ func TestValidateRuntimeConfig(t *testing.T) {
 	}
 }
 
-func TestRootCmdDisablesAutoUpdateByDefault(t *testing.T) {
+func TestRootCmdEnablesAutoUpdateByDefault(t *testing.T) {
 	flag := RootCmd.PersistentFlags().Lookup("disable-auto-update")
 	if flag == nil {
 		t.Fatal("disable-auto-update flag is missing")
 	}
-	if flag.DefValue != "true" {
-		t.Fatalf("disable-auto-update default = %q, want true", flag.DefValue)
+	if flag.DefValue != "false" {
+		t.Fatalf("disable-auto-update default = %q, want false", flag.DefValue)
 	}
 }
 

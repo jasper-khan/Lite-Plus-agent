@@ -26,6 +26,42 @@ func TestUserAuthEqualIgnoresQuotaAndRate(t *testing.T) {
 	}
 }
 
+func TestUserAuthEqualDetectsQuotaRestore(t *testing.T) {
+	exhausted := []UserSpec{{ID: "u1", UUID: "alice", Password: "pw", QuotaBytes: 64, UsedBytes: 64}}
+	restored := []UserSpec{{ID: "u1", UUID: "alice", Password: "pw", QuotaBytes: 64, UsedBytes: 0}}
+	if userAuthEqual(exhausted, restored) {
+		t.Fatal("quota restore should change auth membership")
+	}
+	used := []UserSpec{{ID: "u1", UUID: "alice", Password: "pw", QuotaBytes: 64, UsedBytes: 10}}
+	more := []UserSpec{{ID: "u1", UUID: "alice", Password: "pw", QuotaBytes: 64, UsedBytes: 20}}
+	if !userAuthEqual(used, more) {
+		t.Fatal("usage inside quota should not force core restart")
+	}
+	stillDead := []UserSpec{{ID: "u1", UUID: "alice", Password: "pw", QuotaBytes: 64, UsedBytes: 65}}
+	if !userAuthEqual(exhausted, stillDead) {
+		t.Fatal("still-exhausted usage should not force core restart")
+	}
+}
+
+func TestRouteSpecsEqualIgnoresIDOrder(t *testing.T) {
+	priorityOrder := []RouteSpec{
+		{ID: "z-route", Priority: 10, RuleJSON: `{}`, Enabled: false},
+		{ID: "a-route", Priority: 20, RuleJSON: `{}`, Enabled: false},
+	}
+	idOrder := []RouteSpec{priorityOrder[1], priorityOrder[0]}
+	if !routeSpecsEqual(priorityOrder, append([]RouteSpec(nil), priorityOrder...)) {
+		t.Fatal("identical route lists compared unequal")
+	}
+	if !routeSpecsEqual(priorityOrder, idOrder) {
+		t.Fatal("same routes in non-id order compared unequal")
+	}
+	in := []InboundSpec{{ID: "in", Port: 1, Protocol: "socks"}}
+	users := []UserSpec{{ID: "u1", UUID: "alice", Password: "pw"}}
+	if coreShouldRestart(true, in, in, users, users, nil, nil, priorityOrder, idOrder) {
+		t.Fatal("unchanged routes in non-id order should not restart")
+	}
+}
+
 func TestCoreShouldRestartSkipsUnchangedRunningCore(t *testing.T) {
 	in := []InboundSpec{{ID: "in", Port: 1, Protocol: "socks"}}
 	users := []UserSpec{{ID: "u1", UUID: "alice", Password: "pw"}}

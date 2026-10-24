@@ -94,10 +94,10 @@ func (c *xrayCore) CloseUserSessions(userID string) error {
 	}
 	c.denied[userID] = struct{}{}
 	c.users = markDenied(c.users, userID)
-	c.lastUsers = markDenied(c.lastUsers, userID)
 	c.policy.sync(c.users, c.denied)
 	c.policy.deny(userID)
 	if c.inst == nil && len(c.inbounds) == 0 && len(c.lastIn) == 0 {
+		c.lastUsers = markDenied(c.lastUsers, userID)
 		return nil
 	}
 	check := c.inbounds
@@ -105,6 +105,8 @@ func (c *xrayCore) CloseUserSessions(userID string) error {
 		check = c.lastIn
 	}
 	if !inboundsNeedCoreRestart(check, c.users) {
+		removeXrayUser(c.inst, userID)
+		c.lastUsers = markDenied(c.lastUsers, userID)
 		return nil
 	}
 	if len(c.inbounds) == 0 && len(c.lastIn) > 0 {
@@ -328,6 +330,7 @@ func (c *xrayCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outboun
 	var fronts []frontSpec
 	var policyTags []string
 	var skipIP []string
+	var meterTags []string
 	for i, in := range inbounds {
 		tag := in.ID
 		if tag == "" {
@@ -456,6 +459,9 @@ func (c *xrayCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outboun
 			if identityFront(in, users) {
 				skipIP = append(skipIP, useTag)
 			}
+			if public {
+				meterTags = append(meterTags, useTag)
+			}
 			if policyExitNeeded(in, users, true) {
 				policyTags = append(policyTags, useTag)
 			}
@@ -483,6 +489,7 @@ func (c *xrayCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outboun
 		fronts = append(fronts, extra...)
 	}
 	c.policy.setSkipCoreIP(skipIP)
+	c.policy.setMeterCore(meterTags)
 	cfg := map[string]any{
 		"log":   map[string]any{"loglevel": "error"},
 		"stats": map[string]any{},

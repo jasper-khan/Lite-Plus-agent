@@ -252,7 +252,7 @@ func (c *singBoxCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outb
 			proto = "socks"
 		}
 		switch proto {
-		case "socks", "mixed", "http", "vless", "vmess", "trojan", "hysteria2", "tuic", "shadowsocks":
+		case "socks", "mixed", "http", "vless", "vmess", "trojan", "hysteria2", "tuic", "shadowsocks", "anytls":
 		default:
 			continue
 		}
@@ -322,7 +322,7 @@ func (c *singBoxCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outb
 				continue
 			}
 			item["users"] = clients
-		case "trojan", "hysteria2":
+		case "trojan", "hysteria2", "anytls":
 			pwds := make([]map[string]string, 0, len(granted))
 			for _, u := range granted {
 				if _, pass, ok := socksIdentity(u); ok {
@@ -333,6 +333,11 @@ func (c *singBoxCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outb
 				continue
 			}
 			item["users"] = pwds
+			if proto == "anytls" {
+				if scheme := settingString(in.SettingsJSON, "padding_scheme"); scheme != "" {
+					item["padding_scheme"] = splitPaddingScheme(scheme)
+				}
+			}
 		case "tuic":
 			tuicUsers := make([]map[string]string, 0, len(granted))
 			for _, u := range granted {
@@ -645,6 +650,12 @@ func singBoxOutboundTLS(settings map[string]any) map[string]any {
 	if fp != "" {
 		tls["utls"] = map[string]any{"enabled": true, "fingerprint": fp}
 	}
+	if insecure, ok := settings["insecure"].(bool); ok && insecure {
+		tls["insecure"] = true
+	}
+	if alpn := strings.TrimSpace(firstString(settings["alpn"])); alpn != "" {
+		tls["alpn"] = strings.Split(alpn, ",")
+	}
 	if security == "reality" {
 		reality := map[string]any{"enabled": true}
 		if pk := strings.TrimSpace(firstString(settings["reality_public_key"])); pk != "" {
@@ -656,6 +667,19 @@ func singBoxOutboundTLS(settings map[string]any) map[string]any {
 		tls["reality"] = reality
 	}
 	return tls
+}
+
+func splitPaddingScheme(raw string) []string {
+	raw = strings.ReplaceAll(raw, "\r\n", "\n")
+	parts := strings.Split(raw, "\n")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func singBoxOutboundTransport(settings map[string]any) map[string]any {

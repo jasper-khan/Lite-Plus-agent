@@ -232,6 +232,68 @@ func TestSingBoxRealityDualWildcardBindsCore(t *testing.T) {
 	}
 }
 
+func TestSingBoxAnyTLSRealityBindsPublic(t *testing.T) {
+	c := newSingBoxCore()
+	raw, _, fronts, err := c.buildConfig(
+		[]UserSpec{{ID: "u1", UUID: vlessAlice, Password: "pw"}},
+		[]InboundSpec{{
+			ID:         "anytls",
+			Listen:     "127.0.0.1",
+			Port:       38404,
+			Protocol:   "anytls",
+			StreamJSON: `{"network":"tcp","security":"reality","realitySettings":{"dest":"127.0.0.1:9","serverNames":["audit.test"],"privateKey":"dGVzdA","shortIds":["abcd"]}}`,
+		}},
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, front := range fronts {
+		if !front.Exit {
+			t.Fatalf("anytls reality must bind the core, got public front %+v", front)
+		}
+	}
+	var cfg struct {
+		Inbounds []struct {
+			Listen     string         `json:"listen"`
+			ListenPort int            `json:"listen_port"`
+			Type       string         `json:"type"`
+			TLS        map[string]any `json:"tls"`
+			Users      []struct {
+				Name     string `json:"name"`
+				Password string `json:"password"`
+			} `json:"users"`
+		} `json:"inbounds"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, in := range cfg.Inbounds {
+		if in.Type != "anytls" || in.ListenPort != 38404 {
+			continue
+		}
+		found = true
+		if in.Listen != "127.0.0.1" {
+			t.Fatalf("anytls listen %s", in.Listen)
+		}
+		if in.TLS == nil {
+			t.Fatal("anytls reality missing tls")
+		}
+		reality, _ := in.TLS["reality"].(map[string]any)
+		if reality == nil {
+			t.Fatalf("anytls missing reality: %+v", in.TLS)
+		}
+		if len(in.Users) != 1 || in.Users[0].Password != "pw" {
+			t.Fatalf("anytls users %+v", in.Users)
+		}
+	}
+	if !found {
+		t.Fatalf("anytls inbound missing: %s", raw)
+	}
+}
+
 func TestSingBoxUDPDualCreatesTwoListens(t *testing.T) {
 	c := newSingBoxCore()
 	raw, _, fronts, err := c.buildConfig(
