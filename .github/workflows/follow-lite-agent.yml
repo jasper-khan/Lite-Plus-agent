@@ -100,20 +100,32 @@ jobs:
           XRAY_MOD="$(go list -m -f '{{.Version}}' github.com/xtls/xray-core)"
           SINGBOX_MOD="$(go list -m -f '{{.Version}}' github.com/sagernet/sing-box)"
 
+          python3 scripts/follow_overlay_test.py
+
           set +e
           git merge --no-ff --no-edit "refs/tags/$TAG"
           MERGE_STATUS=$?
           set -e
 
           if [ "$MERGE_STATUS" -ne 0 ]; then
-            BRANCH="follow/lite-agent-$TAG"
-            git add -A
-            git commit -m "follow: Lite-agent ${TAG} (conflicts, needs review)" || true
-            git checkout -B "$BRANCH"
-            git push -u origin "$BRANCH"
-            gh pr create --title "Follow Lite-agent $TAG" --body "Automatic merge of Lite-agent \`$TAG\` failed. Fix conflicts, keep plus-baseline.json to \`lite_plus_agent\` + \`lite_agent\` only, then re-run Follow Lite-agent." || true
-            echo "skipped=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            set +e
+            python3 scripts/follow_overlay.py resolve
+            RESOLVE_STATUS=$?
+            set -e
+            LEFT="$(git diff --name-only --diff-filter=U || true)"
+            if [ "$RESOLVE_STATUS" -ne 0 ] || [ -n "$LEFT" ]; then
+              echo "unresolved follow conflicts:"
+              echo "$LEFT"
+              BRANCH="follow/lite-agent-$TAG"
+              git add -A
+              git commit -m "follow: Lite-agent ${TAG} (conflicts, needs review)" || true
+              git checkout -B "$BRANCH"
+              git push -u origin "$BRANCH"
+              gh pr create --title "Follow Lite-agent $TAG" --body "Automatic merge of Lite-agent \`$TAG\` failed. Branding conflicts are auto-resolved; remaining files still need a human. Keep plus-baseline.json to \`lite_plus_agent\` + \`lite_agent\` only, then re-run Follow Lite-agent." || true
+              echo "skipped=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            git commit --no-edit
           fi
 
           NEW_PLUS="$(go run ./cmd/plusversion bump "$PLUS")"
@@ -130,6 +142,11 @@ jobs:
           git tag "$NEW_PLUS"
           git push origin HEAD
           git push origin "$NEW_PLUS"
+
+          gh pr list --state open --head "follow/lite-agent-${TAG}" --json number --jq '.[].number' | while read -r n; do
+            [ -n "$n" ] || continue
+            gh pr close "$n" --comment "Follow overlay auto-resolved; shipped as ${NEW_PLUS}." || true
+          done
 
           LITE_NOTES="$(gh api "repos/nuomiiiii/Lite-agent/releases/tags/${TAG}" --jq '.body // empty' | sed 's/\r$//')"
           if [ -z "$LITE_NOTES" ]; then

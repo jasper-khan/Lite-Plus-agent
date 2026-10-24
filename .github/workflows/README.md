@@ -280,8 +280,11 @@ Trigger:
 - Manual `workflow_dispatch`, optionally with `lite_agent_tag`.
 
 It does not follow Snapshot, prerelease, or draft releases. If
-`plus-baseline.json` `lite_agent` already equals that tag, it exits. Merge
-conflicts open `follow/lite-agent-<tag>` and a PR; no tag is created.
+`plus-baseline.json` `lite_agent` already equals that tag, it exits. Version,
+repo, readme branding, and changelog rows that Lite also bumps are resolved
+automatically (keep Plus names/numbers, keep Lite's new functional files and
+changelog). Any other merge conflict still opens `follow/lite-agent-<tag>` and
+a PR; no tag is created.
 
 After a successful merge it keeps Xray / sing-box requires, rewrites
 `update.CurrentVersion` and `update.Repo`, writes only `lite_plus_agent` +
