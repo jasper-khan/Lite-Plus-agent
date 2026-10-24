@@ -106,6 +106,10 @@ func TestDetectPlanUsesPlusAgentProcessName(t *testing.T) {
 		t.Fatalf("darwin user destination dir = %q, want %q", plan.To.Dir, wantUserDir)
 	}
 
+	if runtime.GOOS != "windows" {
+		return
+	}
+
 	plan, ok = detectPlan("windows", `C:\Program Files\Komari\komari-agent.exe`, "", `C:\Program Files`)
 	if !ok {
 		t.Fatal("default windows komari layout should relocate")

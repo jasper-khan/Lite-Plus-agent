@@ -24,15 +24,35 @@ NEED_UPDATE_END = "\n\t}\n\n\tfor _, tt := range tests"
 CHANGELOG_END = "\n完整发布记录"
 
 
+def _function_span(text: str, name: str) -> tuple[int, int]:
+    start = text.find(f"func {name}")
+    if start < 0:
+        raise SystemExit(f"{name} not found")
+    nxt = text.find("\nfunc ", start + 1)
+    if nxt < 0:
+        nxt = len(text)
+    return start, nxt
+
+
+def _need_update_span(text: str) -> tuple[int, int]:
+    if "func TestNeedUpdate" in text:
+        return _function_span(text, "TestNeedUpdate")
+    return 0, len(text)
+
+
 def merge_need_update_rows(ours: str, theirs: str) -> str:
-    existing = set(NEED_UPDATE_ROW.findall(ours))
-    extra = [row for row in NEED_UPDATE_ROW.findall(theirs) if row not in existing]
+    os, oe = _need_update_span(ours)
+    ts, te = _need_update_span(theirs)
+    ours_fn = ours[os:oe]
+    theirs_fn = theirs[ts:te]
+    existing = set(NEED_UPDATE_ROW.findall(ours_fn))
+    extra = [row for row in NEED_UPDATE_ROW.findall(theirs_fn) if row not in existing]
     if not extra:
         return ours
-    idx = ours.find(NEED_UPDATE_END)
+    idx = ours_fn.find(NEED_UPDATE_END)
     if idx < 0:
         raise SystemExit("needUpdate table end not found")
-    return ours[:idx] + "\n" + "\n".join(extra) + ours[idx:]
+    return ours[:os] + ours_fn[:idx] + "\n" + "\n".join(extra) + ours_fn[idx:] + ours[oe:]
 
 
 def merge_changelog_rows(ours: str, theirs: str) -> str:
@@ -48,12 +68,14 @@ def merge_changelog_rows(ours: str, theirs: str) -> str:
 
 def ensure_need_update_case(text: str, current: str, latest: str, want: bool) -> str:
     row = f'\t\t{{"{current}", "{latest}", {"true" if want else "false"}}},'
-    if row in text:
+    start, end = _need_update_span(text)
+    section = text[start:end]
+    if row in section:
         return text
-    idx = text.find(NEED_UPDATE_END)
+    idx = section.find(NEED_UPDATE_END)
     if idx < 0:
         raise SystemExit("needUpdate table end not found")
-    return text[:idx] + "\n" + row + text[idx:]
+    return text[:start] + section[:idx] + "\n" + row + section[idx:] + text[end:]
 
 
 def rewrite_versions(root: pathlib.Path, new: str, tag: str) -> None:

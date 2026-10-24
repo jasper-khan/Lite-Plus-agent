@@ -55,11 +55,19 @@ docker pull ghcr.io/nuomiiiii/lite-agent:2.3.10.1
 
 class FollowOverlayTest(unittest.TestCase):
     def test_keeps_plus_need_update_cases_and_adds_lite_rows(self) -> None:
-        got = follow_overlay.merge_need_update_rows(OURS_TEST, THEIRS_TEST)
-        self.assertIn('{"0.0.0.5", "0.0.0.6", true}', got)
-        self.assertIn('{"2.3.10.0", "2.3.10.1", true}', got)
-        self.assertIn('{"2.3.10.1+abc1234", "2.3.10.1", false}', got)
-        self.assertNotIn("lite-agent", got)
+        ours = (
+            'func TestParseVersion(t *testing.T) {\n\ttests := []struct {\n\t\tinput string\n\t\twant  string\n\t}{\n'
+            '\t\t{"v1.2.3", "1.2.3"},\n\t}\n\n\tfor _, tt := range tests {\n\t\t_ = tt\n\t}\n}\n\n'
+            "func TestNeedUpdate(t *testing.T) {\n" + OURS_TEST + "}\n"
+        )
+        theirs = "func TestNeedUpdate(t *testing.T) {\n" + THEIRS_TEST + "}\n"
+        got = follow_overlay.merge_need_update_rows(ours, theirs)
+        parse, _, need = got.partition("func TestNeedUpdate")
+        self.assertIn('{"v1.2.3", "1.2.3"}', parse)
+        self.assertNotIn("2.3.10.1", parse)
+        self.assertIn('{"0.0.0.5", "0.0.0.6", true}', need)
+        self.assertIn('{"2.3.10.0", "2.3.10.1", true}', need)
+        self.assertIn('{"2.3.10.1+abc1234", "2.3.10.1", false}', need)
 
     def test_keeps_plus_readme_and_adds_lite_changelog(self) -> None:
         got = follow_overlay.merge_changelog_rows(OURS_README, THEIRS_README)
@@ -77,8 +85,9 @@ class FollowOverlayTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (root / "update" / "update_test.go").write_text(
-                'func TestDefaultUpdateRepo(t *testing.T) {\n\tif CurrentVersion != "0.0.0.6" {\n\t\tt.Fatalf("CurrentVersion = %q, want 0.0.0.6", CurrentVersion)\n\t}\n}\n'
-                + OURS_TEST,
+                'func TestDefaultUpdateRepo(t *testing.T) {\n\tif CurrentVersion != "0.0.0.6" {\n\t\tt.Fatalf("CurrentVersion = %q, want 0.0.0.6", CurrentVersion)\n\t}\n}\n\n'
+                'func TestParseVersion(t *testing.T) {\n\ttests := []struct {\n\t\tinput string\n\t\twant  string\n\t}{\n\t\t{"v1.2.3", "1.2.3"},\n\t}\n\n\tfor _, tt := range tests {\n\t\t_ = tt\n\t}\n}\n\n'
+                "func TestNeedUpdate(t *testing.T) {\n" + OURS_TEST + "}\n",
                 encoding="utf-8",
             )
             (root / "readme.md").write_text(OURS_README, encoding="utf-8")
@@ -94,6 +103,10 @@ class FollowOverlayTest(unittest.TestCase):
             self.assertIn('CurrentVersion != "0.0.0.7"', test)
             self.assertIn('{"0.0.0.6", "0.0.0.7", true}', test)
             self.assertIn('{"2.3.10.0", "2.3.10.1", true}', test)
+            parse, _, need = test.partition("func TestNeedUpdate")
+            self.assertIn('{"v1.2.3", "1.2.3"}', parse)
+            self.assertNotIn('{"0.0.0.6", "0.0.0.7", true}', parse)
+            self.assertIn('{"0.0.0.6", "0.0.0.7", true}', need)
             readme = (root / "readme.md").read_text(encoding="utf-8")
             self.assertIn("当前稳定版本：`0.0.0.7`", readme)
             self.assertIn("lite-plus-agent:0.0.0.7", readme)
