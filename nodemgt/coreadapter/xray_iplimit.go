@@ -77,7 +77,7 @@ func (d *ipLimitDispatcher) meterLink(ctx context.Context, link *transport.Link)
 		return
 	}
 	userID := d.policy.mapStatName(inbound.User.Email)
-	if userID == "" || !d.policy.liveQuota(userID) {
+	if userID == "" {
 		return
 	}
 	inbound.CanSpliceCopy = 3

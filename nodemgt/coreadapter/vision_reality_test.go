@@ -194,6 +194,55 @@ func TestXrayTLSVisionLiveQuota(t *testing.T) {
 	}
 }
 
+func TestXrayTLSVisionLiveQuotaAfterUnlimited(t *testing.T) {
+	certPEM, keyPEM, pin := auditCerts(t)
+	tlsEcho := startTLSEcho(t, certPEM, keyPEM)
+	defer tlsEcho.Close()
+	core := NewXray()
+	defer core.Stop()
+	if err := core.ApplyUsers([]UserSpec{
+		{ID: "u1", UUID: vlessAlice, Password: "pw", QuotaBytes: 0, Flow: "xtls-rprx-vision"},
+		{ID: "u2", UUID: vlessBob, Password: "pw", QuotaBytes: 1 << 20, Flow: "xtls-rprx-vision"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	port := freePort(t)
+	if err := core.Start(context.Background(), []InboundSpec{{
+		ID: "tls", Core: "xray", Listen: "127.0.0.1", Port: port, Protocol: "vless",
+		CertPEM: certPEM, KeyPEM: keyPEM,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	waitProxy(t, fmt.Sprintf("127.0.0.1:%d", port))
+	aliceCli, alice, err := xrayDial(port, vlessAlice, "xtls-rprx-vision", "tls", "", pin, tlsEcho.Addr().String())
+	if err != nil {
+		t.Fatalf("vision connect: %v", err)
+	}
+	defer aliceCli.Close()
+	defer alice.Close()
+	bobCli, bob, err := xrayDial(port, vlessBob, "xtls-rprx-vision", "tls", "", pin, tlsEcho.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bobCli.Close()
+	defer bob.Close()
+	if !echoConn(alice, []byte("stay")) {
+		t.Fatal("unlimited vision session failed before quota")
+	}
+	if err := core.ApplyUsers([]UserSpec{
+		{ID: "u1", UUID: vlessAlice, Password: "pw", QuotaBytes: 8192, Flow: "xtls-rprx-vision"},
+		{ID: "u2", UUID: vlessBob, Password: "pw", QuotaBytes: 1 << 20, Flow: "xtls-rprx-vision"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if echoConn(alice, make([]byte, 65536)) && echoConn(alice, []byte("again")) {
+		t.Fatal("vision live quota change allowed traffic on existing session")
+	}
+	if !echoConn(bob, []byte("stay")) {
+		t.Fatal("healthy vision session dropped after live quota change")
+	}
+}
+
 func TestRealityQuotaDeviceAndPeerSession(t *testing.T) {
 	requireAltLoopback(t)
 	echo := startEcho(t)
