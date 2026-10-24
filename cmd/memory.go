@@ -8,17 +8,18 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/shirou/gopsutil/v4/mem"
 )
 
 const (
-	hostMemoryReserve = 128 << 20
-	minMemory1CPU     = 64 << 20
-	minMemoryMultiCPU = 96 << 20
-	maxMemory1CPU     = 256 << 20
-	maxMemoryMultiCPU = 512 << 20
-	unlimitedCgroup   = int64(math.MaxInt64 / 2)
+	minMemory1CPU               = 64 << 20
+	minMemoryMultiCPU           = 96 << 20
+	hostReserveSmall            = 64 << 20
+	hostReserveDefault          = 128 << 20
+	defaultMemoryReleaseMinutes = 10
+	unlimitedCgroup             = int64(math.MaxInt64 / 2)
 )
 
 var (
@@ -47,34 +48,45 @@ func configureRuntimeMemory() {
 	if os.Getenv("GOGC") == "" {
 		debug.SetGCPercent(50)
 	}
+	startMemoryRelease(memoryReleaseInterval())
 }
 
 func pickAgentMemoryLimit(total int64, cpus int, limited bool) int64 {
-	if cpus < 1 {
-		cpus = 1
-	}
-	minLimit, maxLimit := int64(minMemoryMultiCPU), int64(maxMemoryMultiCPU)
-	ratio := 0.50
-	if cpus == 1 {
-		minLimit, maxLimit = minMemory1CPU, maxMemory1CPU
-		ratio = 0.40
+	class := cpuClass(cpus)
+	minLimit := int64(minMemoryMultiCPU)
+	if class == 1 {
+		minLimit = minMemory1CPU
 	}
 	if total <= 0 {
 		return minLimit
 	}
+	maxLimit := hostMaxLimit(total, class)
 	budget := total
-	if limited {
-		if cpus == 1 {
-			ratio = 0.70
-		} else {
-			ratio = 0.80
-		}
-	} else if total > hostMemoryReserve {
-		budget = total - hostMemoryReserve
-	} else {
-		budget = total / 2
+	percent := int64(60)
+	switch class {
+	case 1:
+		percent = 40
+	case 2:
+		percent = 50
 	}
-	limit := int64(float64(budget) * ratio)
+	if limited {
+		if class == 1 {
+			percent = 70
+		} else {
+			percent = 80
+		}
+	} else {
+		reserve := int64(hostReserveDefault)
+		if total <= 256<<20 {
+			reserve = hostReserveSmall
+		}
+		if total > reserve {
+			budget = total - reserve
+		} else {
+			budget = total / 2
+		}
+	}
+	limit := budget * percent / 100
 	if limit < minLimit {
 		limit = minLimit
 	}
@@ -86,6 +98,71 @@ func pickAgentMemoryLimit(total int64, cpus int, limited bool) int64 {
 		limit = capAt
 	}
 	return limit
+}
+
+func cpuClass(cpus int) int {
+	if cpus <= 1 {
+		return 1
+	}
+	if cpus <= 3 {
+		return 2
+	}
+	return 4
+}
+
+func hostMaxLimit(total int64, class int) int64 {
+	var max1, max2, max4 int64
+	switch {
+	case total <= 256<<20:
+		max1, max2, max4 = 64, 96, 96
+	case total <= 512<<20:
+		max1, max2, max4 = 128, 160, 192
+	case total <= 1024<<20:
+		max1, max2, max4 = 192, 256, 320
+	case total <= 2048<<20:
+		max1, max2, max4 = 256, 384, 512
+	case total <= 3072<<20:
+		max1, max2, max4 = 320, 448, 640
+	default:
+		max1, max2, max4 = 384, 512, 768
+	}
+	switch class {
+	case 1:
+		return max1 << 20
+	case 2:
+		return max2 << 20
+	default:
+		return max4 << 20
+	}
+}
+
+func memoryReleaseInterval() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("AGENT_MEMORY_RELEASE_INTERVAL"))
+	if raw == "" {
+		return defaultMemoryReleaseMinutes * time.Minute
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return defaultMemoryReleaseMinutes * time.Minute
+	}
+	if n == 0 {
+		return 0
+	}
+	return time.Duration(n) * time.Minute
+}
+
+func startMemoryRelease(interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	log.Printf("runtime memory release every %s", interval)
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			debug.FreeOSMemory()
+		}
+	}()
 }
 
 func detectMemoryBudget() (total int64, limited bool) {

@@ -2,7 +2,7 @@
 
 Lite-Plus 的跨平台节点监控与节点管理 Agent。本仓库版本在基础监控之外，支持安全远程终端、文件管理、远程命令、Cloudflare Access、在线配置下发、配置结果回执，以及双核节点管理。
 
-当前稳定版本：`0.0.0.5`
+当前稳定版本：`0.0.0.6`
 
 使用 MCP 代理功能，Lite需升级至 2.3.3 或更高版本。
 
@@ -59,7 +59,7 @@ docker pull ghcr.io/nuomiiiii/lite-plus-agent:latest
 也可以拉取固定版本：
 
 ```bash
-docker pull ghcr.io/nuomiiiii/lite-plus-agent:0.0.0.5
+docker pull ghcr.io/nuomiiiii/lite-plus-agent:0.0.0.6
 ```
 
 容器的启动参数、宿主机目录挂载和节点 Token 请以 Lite 后台生成的部署命令为准。Docker 部署不会在容器内替换 Agent 二进制；升级时需拉取新镜像并重建容器。
@@ -223,6 +223,7 @@ Client ID 与 Client Secret 必须成对配置，可以选择命令行参数、�
 
 | 版本 | 主要内容 |
 | --- | --- |
+| `0.0.0.6` | Lite-Plus-agent 第六个版本。产品号与 Lite-agent 分开。按内存档（256/512/1024/2048/3072/4096）和实际核数收软上限，并定期把空闲内存还给系统。同进程双核（Xray v26.6.27、sing-box v1.14.3）。基线 Lite-agent `2.3.10.0`。 |
 | `0.0.0.5` | Lite-Plus-agent 第五个版本。产品号与 Lite-agent 分开。路由 `geosite:` / `geoip:` 按实际内核拉 geo 文件；在线 IP 只计当前会话；节点证书申请改为 RSA 2048。同进程双核（Xray v26.6.27、sing-box v1.14.3）。基线 Lite-agent `2.3.10.0`。 |
 | `0.0.0.4` | Lite-Plus-agent 第四个版本。产品号与 Lite-agent 分开。同进程双核节点管理（Xray v26.6.27、sing-box v1.14.3），后台下发的入站、节点用户、证书、额度和限速在本进程生效。默认安装目录、服务名和 Release 资产改为 `Lite-Plus-agent` / `lite-plus-agent`。从 Lite-agent 或 komari-agent 默认路径升级会搬到 Plus 布局。自动更新只认本仓。许可 GPL-3.0。基线 Lite-agent `2.3.10.0`。 |
 | `0.0.0.3` | Lite-Plus-agent 第一版。产品号与 Lite-agent 分开。同进程双核节点管理（Xray v26.6.27、sing-box v1.14.3），后台下发的入站、节点用户、证书、额度和限速在本进程生效。默认安装目录、服务名和 Release 资产改为 `Lite-Plus-agent` / `lite-plus-agent`。从 Lite-agent 或 komari-agent 默认路径升级会搬到 Plus 布局。自动更新只认本仓。许可 GPL-3.0。基线 Lite-agent `2.3.10.0`。 |

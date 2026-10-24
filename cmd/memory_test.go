@@ -6,31 +6,47 @@ import (
 	"runtime"
 	"runtime/debug"
 	"testing"
+	"time"
 )
 
 func TestPickAgentMemoryLimit(t *testing.T) {
 	const mib = int64(1 << 20)
 	cases := []struct {
-		name     string
-		total    int64
-		cpus     int
-		limited  bool
-		wantMiB  int64
+		name    string
+		total   int64
+		cpus    int
+		limited bool
+		wantMiB int64
 	}{
 		{"unknown 1cpu", 0, 1, false, 64},
 		{"unknown 2cpu", 0, 2, false, 96},
+		{"unknown 4cpu", 0, 4, false, 96},
 		{"256 host 1cpu", 256 * mib, 1, false, 64},
 		{"256 host 2cpu", 256 * mib, 2, false, 96},
-		{"512 host 1cpu", 512 * mib, 1, false, 153},
-		{"512 host 2cpu", 512 * mib, 2, false, 192},
-		{"1g host 1cpu", 1024 * mib, 1, false, 256},
-		{"1g host 2cpu", 1024 * mib, 2, false, 448},
+		{"256 host 4cpu", 256 * mib, 4, false, 96},
+		{"512 host 1cpu", 512 * mib, 1, false, 128},
+		{"512 host 2cpu", 512 * mib, 2, false, 160},
+		{"512 host 4cpu", 512 * mib, 4, false, 192},
+		{"960 host 1cpu", 960 * mib, 1, false, 192},
+		{"1g host 1cpu", 1024 * mib, 1, false, 192},
+		{"1g host 2cpu", 1024 * mib, 2, false, 256},
+		{"1g host 3cpu", 1024 * mib, 3, false, 256},
+		{"1g host 4cpu", 1024 * mib, 4, false, 320},
+		{"1g host 5cpu", 1024 * mib, 5, false, 320},
 		{"2g host 1cpu", 2048 * mib, 1, false, 256},
-		{"2g host 2cpu", 2048 * mib, 2, false, 512},
-		{"256 cgroup 1cpu", 256 * mib, 1, true, 179},
-		{"256 cgroup 2cpu", 256 * mib, 2, true, 204},
-		{"512 cgroup 1cpu", 512 * mib, 1, true, 256},
-		{"1g cgroup 2cpu", 1024 * mib, 2, true, 512},
+		{"2g host 2cpu", 2048 * mib, 2, false, 384},
+		{"2g host 4cpu", 2048 * mib, 4, false, 512},
+		{"3g host 1cpu", 3072 * mib, 1, false, 320},
+		{"3g host 2cpu", 3072 * mib, 2, false, 448},
+		{"3g host 4cpu", 3072 * mib, 4, false, 640},
+		{"4g host 1cpu", 4096 * mib, 1, false, 384},
+		{"4g host 2cpu", 4096 * mib, 2, false, 512},
+		{"4g host 4cpu", 4096 * mib, 4, false, 768},
+		{"256 cgroup 1cpu", 256 * mib, 1, true, 64},
+		{"256 cgroup 2cpu", 256 * mib, 2, true, 96},
+		{"512 cgroup 1cpu", 512 * mib, 1, true, 128},
+		{"1g cgroup 2cpu", 1024 * mib, 2, true, 256},
+		{"1g cgroup 4cpu", 1024 * mib, 4, true, 320},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -89,7 +105,36 @@ func TestParseCgroupBytes(t *testing.T) {
 	}
 }
 
+func TestCpuClass(t *testing.T) {
+	if cpuClass(1) != 1 || cpuClass(0) != 1 {
+		t.Fatal("1 cpu class")
+	}
+	if cpuClass(2) != 2 || cpuClass(3) != 2 {
+		t.Fatal("2/3 cpu class")
+	}
+	if cpuClass(4) != 4 || cpuClass(8) != 4 {
+		t.Fatal("4+ cpu class")
+	}
+}
+
+func TestMemoryReleaseInterval(t *testing.T) {
+	t.Setenv("AGENT_MEMORY_RELEASE_INTERVAL", "")
+	_ = os.Unsetenv("AGENT_MEMORY_RELEASE_INTERVAL")
+	if memoryReleaseInterval() != 10*time.Minute {
+		t.Fatalf("default = %s", memoryReleaseInterval())
+	}
+	t.Setenv("AGENT_MEMORY_RELEASE_INTERVAL", "0")
+	if memoryReleaseInterval() != 0 {
+		t.Fatal("0 should disable")
+	}
+	t.Setenv("AGENT_MEMORY_RELEASE_INTERVAL", "15")
+	if memoryReleaseInterval() != 15*time.Minute {
+		t.Fatalf("15m = %s", memoryReleaseInterval())
+	}
+}
+
 func TestConfigureRuntimeMemoryDefault(t *testing.T) {
+	t.Setenv("AGENT_MEMORY_RELEASE_INTERVAL", "0")
 	if err := os.Unsetenv("GOMEMLIMIT"); err != nil {
 		t.Fatal(err)
 	}
@@ -133,6 +178,7 @@ func TestConfigureRuntimeMemoryDefault(t *testing.T) {
 }
 
 func TestConfigureRuntimeMemoryRespectsEnv(t *testing.T) {
+	t.Setenv("AGENT_MEMORY_RELEASE_INTERVAL", "0")
 	t.Setenv("GOMEMLIMIT", "256MiB")
 	t.Setenv("GOGC", "200")
 	t.Setenv("GOMAXPROCS", "4")
