@@ -1,9 +1,8 @@
 package certstore
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -52,15 +51,11 @@ func Open(dir string) (*Store, error) {
 func (s *Store) GenerateCSR(domain string) (keyPEM, csrPEM string, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return "", "", err
 	}
-	der, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return "", "", err
-	}
-	keyPEMBytes := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
+	keyPEMBytes := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
 	tpl := &x509.CertificateRequest{Subject: pkix.Name{CommonName: domain}, DNSNames: []string{domain}}
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, tpl, key)
 	if err != nil {

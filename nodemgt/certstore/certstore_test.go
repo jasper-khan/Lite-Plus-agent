@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -13,6 +14,40 @@ import (
 	"testing"
 	"time"
 )
+
+func TestGenerateCSRUsesRSA2048(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, csrPEM, err := store.GenerateCSR("panel.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyBlock, _ := pem.Decode([]byte(keyPEM))
+	if keyBlock == nil || keyBlock.Type != "RSA PRIVATE KEY" {
+		t.Fatalf("key type %q", keyBlock)
+	}
+	key, err := x509.ParsePKCS1PrivateKey(keyBlock.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key.N.BitLen() != 2048 {
+		t.Fatalf("key bits %d", key.N.BitLen())
+	}
+	csrBlock, _ := pem.Decode([]byte(csrPEM))
+	if csrBlock == nil {
+		t.Fatal("csr pem")
+	}
+	csr, err := x509.ParseCertificateRequest(csrBlock.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, ok := csr.PublicKey.(*rsa.PublicKey)
+	if !ok || pub.N.BitLen() != 2048 {
+		t.Fatalf("csr pub %T bits", csr.PublicKey)
+	}
+}
 
 func writePair(t *testing.T, dir, name string, notAfter time.Time) (certPath, keyPath, fp string) {
 	t.Helper()
