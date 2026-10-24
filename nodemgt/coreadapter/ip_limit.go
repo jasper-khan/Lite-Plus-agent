@@ -150,10 +150,6 @@ func (p *policyEngine) meterCoreTag(tag string) bool {
 	return ok
 }
 
-func (p *policyEngine) liveQuota(userID string) bool {
-	return p.quota.Room(userID) >= 0
-}
-
 func (p *policyEngine) accountLinkBytes(userID string, n int) bool {
 	if n <= 0 {
 		return true
