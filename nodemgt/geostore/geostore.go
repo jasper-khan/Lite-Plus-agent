@@ -86,8 +86,12 @@ func RuleSetFile(kind, code string) string {
 	return kind + "-" + code + ".srs"
 }
 
-func (s *Store) Ensure(ctx context.Context, geosite, geoip []string) error {
+func (s *Store) Ensure(ctx context.Context, geosite, geoip []string, cores ...string) error {
 	if s == nil {
+		return nil
+	}
+	needXray, needSingBox := wantedCores(cores)
+	if !needXray && !needSingBox {
 		return nil
 	}
 	s.mu.Lock()
@@ -96,34 +100,53 @@ func (s *Store) Ensure(ctx context.Context, geosite, geoip []string) error {
 	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
 		return err
 	}
-	needDat := map[string]bool{}
-	if len(geosite) > 0 {
-		needDat["geosite.dat"] = true
-	}
-	if len(geoip) > 0 {
-		needDat["geoip.dat"] = true
-	}
-	for name := range needDat {
-		if err := s.ensureFile(ctx, name, s.DatURLs[name], s.minSize(name), false); err != nil {
-			return err
+	if needXray {
+		needDat := map[string]bool{}
+		if len(geosite) > 0 {
+			needDat["geosite.dat"] = true
+		}
+		if len(geoip) > 0 {
+			needDat["geoip.dat"] = true
+		}
+		for name := range needDat {
+			if err := s.ensureFile(ctx, name, s.DatURLs[name], s.minSize(name), false); err != nil {
+				return err
+			}
 		}
 	}
-	for _, code := range geosite {
-		name := RuleSetFile("geosite", code)
-		if err := s.ensureFile(ctx, name, s.srsURLs("geosite", code), s.MinSRS, false); err != nil {
-			return err
+	if needSingBox {
+		for _, code := range geosite {
+			name := RuleSetFile("geosite", code)
+			if err := s.ensureFile(ctx, name, s.srsURLs("geosite", code), s.MinSRS, false); err != nil {
+				return err
+			}
 		}
-	}
-	for _, code := range geoip {
-		if strings.EqualFold(code, "private") {
-			continue
-		}
-		name := RuleSetFile("geoip", code)
-		if err := s.ensureFile(ctx, name, s.srsURLs("geoip", code), s.MinSRS, false); err != nil {
-			return err
+		for _, code := range geoip {
+			if strings.EqualFold(code, "private") {
+				continue
+			}
+			name := RuleSetFile("geoip", code)
+			if err := s.ensureFile(ctx, name, s.srsURLs("geoip", code), s.MinSRS, false); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+func wantedCores(cores []string) (xray, singbox bool) {
+	if len(cores) == 0 {
+		return true, true
+	}
+	for _, name := range cores {
+		switch strings.ToLower(strings.TrimSpace(name)) {
+		case "xray":
+			xray = true
+		case "sing-box", "singbox":
+			singbox = true
+		}
+	}
+	return xray, singbox
 }
 
 func (s *Store) RefreshStale(ctx context.Context) {

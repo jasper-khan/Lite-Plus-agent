@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/nuomiiiii/lite-agent/nodemgt/certstore"
@@ -34,6 +35,7 @@ type Runtime struct {
 	cancel   context.CancelFunc
 	result   func(method string, params any)
 	sender   func(method string, params any) error
+	geoBusy  atomic.Bool
 }
 
 type opLog struct {
@@ -147,9 +149,22 @@ func (r *Runtime) loop(ctx context.Context) {
 		case <-certTick.C:
 			r.reloadRenewedFileCerts()
 		case <-geoTick.C:
-			r.geo.RefreshStale(ctx)
+			r.refreshGeo(ctx)
 		}
 	}
+}
+
+func (r *Runtime) refreshGeo(ctx context.Context) {
+	if r == nil || r.geo == nil {
+		return
+	}
+	if !r.geoBusy.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer r.geoBusy.Store(false)
+		r.geo.RefreshStale(ctx)
+	}()
 }
 
 func (r *Runtime) HandleControl(params any, eventID string) bool {
@@ -431,9 +446,11 @@ func (r *Runtime) applySnapshot(payload json.RawMessage, keepDeny bool) error {
 		})
 	}
 	ctx := context.Background()
-	if geosite, geoip := coreadapter.CollectGeo(rts); len(geosite) > 0 || len(geoip) > 0 {
-		if err := r.geo.Ensure(ctx, geosite, geoip); err != nil {
-			return fmt.Errorf("geo files: %w", err)
+	if cores := usedCoreNames(inbounds); len(cores) > 0 {
+		if geosite, geoip := coreadapter.CollectGeo(rts); len(geosite) > 0 || len(geoip) > 0 {
+			if err := r.geo.Ensure(ctx, geosite, geoip, cores...); err != nil {
+				return fmt.Errorf("geo files: %w", err)
+			}
 		}
 	}
 	var firstErr error
@@ -466,6 +483,28 @@ func (r *Runtime) applySnapshot(payload json.RawMessage, keepDeny bool) error {
 	r.lastSnap = append(json.RawMessage(nil), payload...)
 	r.mu.Unlock()
 	return nil
+}
+
+func usedCoreNames(inbounds []coreadapter.InboundSpec) []string {
+	xray, singbox := false, false
+	for _, in := range inbounds {
+		switch in.Core {
+		case "", "xray":
+			xray = true
+		}
+		switch in.Core {
+		case "", "sing-box":
+			singbox = true
+		}
+	}
+	out := make([]string, 0, 2)
+	if xray {
+		out = append(out, "xray")
+	}
+	if singbox {
+		out = append(out, "sing-box")
+	}
+	return out
 }
 
 func (r *Runtime) snapshotPath() string {
