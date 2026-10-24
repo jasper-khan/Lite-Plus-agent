@@ -2,7 +2,11 @@
 
 Lite-Plus 的跨平台节点监控与节点管理 Agent。本仓库版本在基础监控之外，支持安全远程终端、文件管理、远程命令、Cloudflare Access、在线配置下发、配置结果回执，以及双核节点管理。
 
+<<<<<<< HEAD
 当前稳定版本：`0.0.0.6`
+=======
+当前稳定版本：`2.3.10.1`
+>>>>>>> refs/tags/2.3.10.1
 
 使用 MCP 代理功能，Lite需升级至 2.3.3 或更高版本。
 
@@ -53,13 +57,21 @@ Docker 请用原来的 `-e` `-t` 重建 Lite-Plus-agent 容器，不要在容器
 ### Docker
 
 ```bash
+<<<<<<< HEAD
 docker pull ghcr.io/nuomiiiii/lite-plus-agent:latest
+=======
+docker pull ghcr.io/nuomiiiii/lite-agent:latest
+>>>>>>> refs/tags/2.3.10.1
 ```
 
 也可以拉取固定版本：
 
 ```bash
+<<<<<<< HEAD
 docker pull ghcr.io/nuomiiiii/lite-plus-agent:0.0.0.6
+=======
+docker pull ghcr.io/nuomiiiii/lite-agent:2.3.10.1
+>>>>>>> refs/tags/2.3.10.1
 ```
 
 容器的启动参数、宿主机目录挂载和节点 Token 请以 Lite 后台生成的部署命令为准。Docker 部署不会在容器内替换 Agent 二进制；升级时需拉取新镜像并重建容器。
@@ -257,5 +269,9 @@ Client ID 与 Client Secret 必须成对配置，可以选择命令行参数、�
 | `2.3.6.3` | LXC/LXD 容器的运行时间改为容器自己的开机时长，不再显示宿主机的开机时长。读不到容器自己的时长时，仍按原来的方式显示。感谢 IShinji 的 [PR #3](https://github.com/nuomiiiii/Lite-agent/pull/3)。 |
 | `2.3.6.4` | HTTP 探测改为带上常见浏览器请求头。原先部分站点会拒绝默认请求并返回 403，延迟被记成失败。未返回成功状态时，探测结果仍记为失败。 |
 | `2.3.10.0` | 修复 CVE-2026-111943。当前 Agent 不受该问题影响，此次一并跟进。 |
+<<<<<<< HEAD
+=======
+| `2.3.10.1` | 修复远程终端执行输出很多、耗时较长的命令后，过几分钟无法输入的 bug。请配套 Lite 2.3.10 同版本第一次更新。 |
+>>>>>>> refs/tags/2.3.10.1
 
 完整发布记录和升级说明请查看 [GitHub Releases](https://github.com/nuomiiiii/Lite-Plus-agent/releases)。

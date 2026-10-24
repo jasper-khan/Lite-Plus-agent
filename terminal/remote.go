@@ -31,6 +31,7 @@ func (writer *remoteWriter) writeBinary(data []byte) error {
 
 func StartRemoteSession(conn *websocket.Conn) {
 	writer := &remoteWriter{conn: conn}
+	attachRemotePingHandler(conn)
 	if !remoteControlEnabled() {
 		_ = writer.writeJSON(map[string]any{"type": "remote.error", "message": "Remote control is disabled on this agent"})
 		return
@@ -43,6 +44,7 @@ func StartRemoteSession(conn *websocket.Conn) {
 	manager := newFileManager(writer)
 	done := make(chan struct{})
 	errCh := make(chan error, 2)
+	output := make(chan []byte, remoteOutputQueueSize)
 	defer func() {
 		close(done)
 		manager.close()
@@ -58,7 +60,8 @@ func StartRemoteSession(conn *websocket.Conn) {
 		"file_transfer": fileTransferVersion,
 	})
 
-	go handleRemoteTerminalOutput(writer, impl.term, errCh, done)
+	go handleRemoteTerminalOutput(impl.term, output, errCh, done)
+	go writeRemoteTerminalOutput(writer, output, errCh, done)
 	go func() {
 		for {
 			messageType, payload, err := conn.ReadMessage()
@@ -107,7 +110,7 @@ func StartRemoteSession(conn *websocket.Conn) {
 	}
 }
 
-func handleRemoteTerminalOutput(writer *remoteWriter, term Terminal, errCh chan<- error, done <-chan struct{}) {
+func handleRemoteTerminalOutput(term Terminal, output chan []byte, errCh chan<- error, done <-chan struct{}) {
 	buffer := make([]byte, 4096)
 	for {
 		select {
@@ -116,15 +119,39 @@ func handleRemoteTerminalOutput(writer *remoteWriter, term Terminal, errCh chan<
 		default:
 		}
 		count, err := term.Read(buffer)
-		if err == nil && count > 0 {
-			err = writer.writeMessage(websocket.BinaryMessage, buffer[:count])
-		}
 		if err != nil {
-			select {
-			case errCh <- err:
-			default:
-			}
+			signalRemoteError(errCh, err)
 			return
 		}
+		if count == 0 {
+			continue
+		}
+		if !enqueueRemoteOutput(output, append([]byte(nil), buffer[:count]...), done) {
+			return
+		}
+	}
+}
+
+func writeRemoteTerminalOutput(writer *remoteWriter, output <-chan []byte, errCh chan<- error, done <-chan struct{}) {
+	for {
+		select {
+		case <-done:
+			return
+		case chunk, ok := <-output:
+			if !ok {
+				return
+			}
+			if err := writer.writeMessage(websocket.BinaryMessage, chunk); err != nil {
+				signalRemoteError(errCh, err)
+				return
+			}
+		}
+	}
+}
+
+func signalRemoteError(errCh chan<- error, err error) {
+	select {
+	case errCh <- err:
+	default:
 	}
 }

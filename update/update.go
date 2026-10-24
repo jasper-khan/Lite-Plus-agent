@@ -22,9 +22,14 @@ import (
 )
 
 var (
+<<<<<<< HEAD
 	CurrentVersion string = "0.0.0.6"
 	// Repo is the Plus agent GitHub release channel. Do not point at Lite-agent.
 	Repo string = "nuomiiiii/Lite-Plus-agent"
+=======
+	CurrentVersion string = "2.3.10.1"
+	Repo           string = "nuomiiiii/Lite-agent"
+>>>>>>> refs/tags/2.3.10.1
 )
 
 const (
