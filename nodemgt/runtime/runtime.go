@@ -15,6 +15,7 @@ import (
 
 	"github.com/nuomiiiii/lite-agent/nodemgt/certstore"
 	"github.com/nuomiiiii/lite-agent/nodemgt/coreadapter"
+	"github.com/nuomiiiii/lite-agent/nodemgt/geostore"
 	"github.com/nuomiiiii/lite-agent/nodemgt/quota"
 	v2 "github.com/nuomiiiii/lite-agent/protocol/v2"
 )
@@ -23,6 +24,7 @@ type Runtime struct {
 	mu       sync.Mutex
 	dir      string
 	certs    *certstore.Store
+	geo      *geostore.Store
 	cores    []coreadapter.Core
 	users    []coreadapter.UserSpec
 	denied   map[string]struct{}
@@ -85,11 +87,18 @@ func Start(configFile string, result func(method string, params any)) (*Runtime,
 	if err != nil {
 		return nil, err
 	}
+	geo, err := geostore.Open(filepath.Join(dir, "geo"))
+	if err != nil {
+		return nil, err
+	}
+	geostore.BindXray(geo.Dir)
+	coreadapter.SetGeoAssetDir(geo.Dir)
 	_ = os.MkdirAll(dir, 0o700)
 	ctx, cancel := context.WithCancel(context.Background())
 	rt := &Runtime{
 		dir:    dir,
 		certs:  certs,
+		geo:    geo,
 		cores:  coreadapter.All(),
 		denied: map[string]struct{}{},
 		quota:  quota.New(),
@@ -122,9 +131,11 @@ func (r *Runtime) loop(ctx context.Context) {
 	expireTick := time.NewTicker(time.Second)
 	usageTick := time.NewTicker(15 * time.Second)
 	certTick := time.NewTicker(time.Minute)
+	geoTick := time.NewTicker(12 * time.Hour)
 	defer expireTick.Stop()
 	defer usageTick.Stop()
 	defer certTick.Stop()
+	defer geoTick.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -135,6 +146,8 @@ func (r *Runtime) loop(ctx context.Context) {
 			r.FlushUsage()
 		case <-certTick.C:
 			r.reloadRenewedFileCerts()
+		case <-geoTick.C:
+			r.geo.RefreshStale(ctx)
 		}
 	}
 }
@@ -418,6 +431,11 @@ func (r *Runtime) applySnapshot(payload json.RawMessage, keepDeny bool) error {
 		})
 	}
 	ctx := context.Background()
+	if geosite, geoip := coreadapter.CollectGeo(rts); len(geosite) > 0 || len(geoip) > 0 {
+		if err := r.geo.Ensure(ctx, geosite, geoip); err != nil {
+			return fmt.Errorf("geo files: %w", err)
+		}
+	}
 	var firstErr error
 	for _, core := range r.cores {
 		if setter, ok := core.(interface {

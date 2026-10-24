@@ -286,6 +286,8 @@ func (p *policyEngine) noteIP(userID, ip string) {
 	p.seen[userID][ip] = time.Now().UTC()
 }
 
+const presenceFresh = 45 * time.Second
+
 func (p *policyEngine) presence() []Presence {
 	live := p.sess.LiveIPs()
 	counts := p.sess.OnlineCounts()
@@ -303,17 +305,19 @@ func (p *policyEngine) presence() []Presence {
 	}
 	out := make([]Presence, 0, len(ids))
 	now := time.Now().UTC()
+	nextSeen := map[string]map[string]time.Time{}
 	for id := range ids {
 		row := Presence{UserID: id, Online: counts[id] > 0 || len(live[id]) > 0}
-		seen := map[string]time.Time{}
-		for ip, at := range p.seen[id] {
-			seen[ip] = at
-		}
+		held := map[string]time.Time{}
 		for _, ip := range live[id] {
-			seen[ip] = now
+			ip = strings.TrimSpace(ip)
+			if ip == "" {
+				continue
+			}
+			held[ip] = now
 			row.Online = true
 		}
-		for ip, at := range seen {
+		for ip, at := range held {
 			row.IPs = append(row.IPs, PresenceIP{IP: ip, SeenAt: at})
 		}
 		sort.Slice(row.IPs, func(i, j int) bool {
@@ -322,8 +326,12 @@ func (p *policyEngine) presence() []Presence {
 			}
 			return row.IPs[i].SeenAt.After(row.IPs[j].SeenAt)
 		})
+		if len(held) > 0 {
+			nextSeen[id] = held
+		}
 		out = append(out, row)
 	}
+	p.seen = nextSeen
 	sort.Slice(out, func(i, j int) bool { return out[i].UserID < out[j].UserID })
 	return out
 }

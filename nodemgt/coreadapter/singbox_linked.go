@@ -419,7 +419,11 @@ func (c *singBoxCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outb
 		"outbounds": obs,
 	}
 	if len(rules) > 0 {
-		cfg["route"] = map[string]any{"rules": rules, "final": "direct"}
+		route := map[string]any{"rules": rules, "final": "direct"}
+		if sets := singBoxRuleSets(routes); len(sets) > 0 {
+			route["rule_set"] = sets
+		}
+		cfg["route"] = route
 	}
 	raw, err := json.Marshal(cfg)
 	return raw, len(items), fronts, err
@@ -612,18 +616,13 @@ func singBoxRouteRules(routes []RouteSpec, outbounds []OutboundSpec) []map[strin
 		if tag := byID[rule.OutboundID]; tag != "" {
 			item["outbound"] = tag
 		}
-		if rule.Domain != "" {
-			item["domain"] = strings.Split(rule.Domain, ",")
-		}
-		if rule.IP != "" {
-			item["ip_cidr"] = strings.Split(rule.IP, ",")
-		}
 		if rule.Protocol != "" {
-			item["protocol"] = strings.Split(rule.Protocol, ",")
+			item["protocol"] = splitCSV(rule.Protocol)
 		}
 		if rule.InboundID != "" {
 			item["inbound"] = []string{rule.InboundID}
 		}
+		item = mergeSingBoxGeo(item, parseGeoMatch(splitCSV(rule.Domain), splitCSV(rule.IP)))
 		if len(item) > 1 {
 			rules = append(rules, item)
 		}

@@ -601,7 +601,7 @@ func TestSOCKSPresenceIncludesClientIP(t *testing.T) {
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	waitProxy(t, addr)
 	conn := socksDial(t, addr, "alice", "pw", echo.Addr().String())
-	defer conn.Close()
+	t.Cleanup(func() { _ = conn.Close() })
 	if !echoConn(conn, []byte("ip")) {
 		t.Fatal("echo")
 	}
@@ -619,6 +619,26 @@ func TestSOCKSPresenceIncludesClientIP(t *testing.T) {
 	if !found {
 		t.Fatalf("presence %+v", core.Presence())
 	}
+	conn.Close()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		leftover := false
+		for _, row := range core.Presence() {
+			if row.UserID != "u1" {
+				continue
+			}
+			for _, ip := range row.IPs {
+				if ip.IP == "127.0.0.1" {
+					leftover = true
+				}
+			}
+		}
+		if !leftover {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("offline still has ip %+v", core.Presence())
 }
 
 func socksDial(t *testing.T, addr, user, pass, dest string) net.Conn {

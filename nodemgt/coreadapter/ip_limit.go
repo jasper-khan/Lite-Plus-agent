@@ -6,9 +6,10 @@ import (
 	"sync"
 )
 
-// ipGuard counts unique client IPs per user. DeviceLimit on UserSpec is that
-// cap (0 = unlimited). Extra connections from an IP already held do not consume
-// another slot.
+// ipGuard counts concurrent unique client IPs per user. DeviceLimit on UserSpec
+// is that live cap (0 = unlimited). Extra connections from an IP already held
+// do not consume another slot. IPs are released when the last session from
+// that address closes; historical addresses do not count.
 type ipGuard struct {
 	mu   sync.Mutex
 	live map[string]map[string]int

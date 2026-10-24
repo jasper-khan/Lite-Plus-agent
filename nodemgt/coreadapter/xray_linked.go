@@ -203,8 +203,12 @@ func (c *xrayCore) Presence() []Presence {
 						if ip == "" {
 							return true
 						}
+						seen := presenceIPAt(ip, unix, now)
+						if now.Sub(seen.SeenAt) > presenceFresh {
+							return true
+						}
 						row.Online = true
-						row.IPs = mergePresenceIP(row.IPs, presenceIPAt(ip, unix, now))
+						row.IPs = mergePresenceIP(row.IPs, seen)
 						return true
 					})
 					byID[id] = row
