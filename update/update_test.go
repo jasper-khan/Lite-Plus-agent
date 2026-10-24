@@ -127,6 +127,8 @@ func TestNeedUpdate(t *testing.T) {
 		{"2.3.6.4+abc1234", "2.3.6.4", false},
 		{"2.3.6.4", "2.3.10.0", true},
 		{"2.3.10.0+abc1234", "2.3.10.0", false},
+		{"2.3.10.0", "2.3.10.1", true},
+		{"2.3.10.1+abc1234", "2.3.10.1", false},
 	}
 
 	for _, tt := range tests {
