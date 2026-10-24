@@ -135,7 +135,7 @@ jobs:
           go get "github.com/sagernet/sing-box@${SINGBOX_MOD}"
           go mod tidy
 
-          go test -tags with_quic,with_utls ./...
+          go test -tags with_quic,with_utls ./terminal/ ./update/ ./cmd/
 
           git add -A
           git commit -m "follow: Lite-agent ${TAG} → Plus-agent ${NEW_PLUS}"

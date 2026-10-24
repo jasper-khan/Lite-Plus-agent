@@ -288,8 +288,9 @@ a PR; no tag is created.
 
 After a successful merge it keeps Xray / sing-box requires, rewrites
 `update.CurrentVersion` and `update.Repo`, writes only `lite_plus_agent` +
-`lite_agent` into `plus-baseline.json`, runs `go test -tags with_quic,with_utls ./...`,
-then tags and publishes a Plus-agent GitHub Release. Binary assets are uploaded
+`lite_agent` into `plus-baseline.json`, runs `go test -tags with_quic,with_utls`
+on `./terminal/`, `./update/`, and `./cmd/` (the packages a Lite follow actually
+touches), then tags and publishes a Plus-agent GitHub Release. Binary assets are uploaded
 by this workflow so the follow still ships if `GITHUB_TOKEN` cannot start
 `release.yml`. Set repository secret `PLUS_FOLLOW_TOKEN` (contents + workflow
 scope) so the follow job can also dispatch `release-docker.yml`.
