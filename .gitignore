@@ -17,3 +17,6 @@ config.json
 
 # Cursor editor rules stay on this machine.
 .cursor/
+
+__pycache__/
+*.pyc
