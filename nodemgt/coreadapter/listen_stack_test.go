@@ -227,7 +227,7 @@ func TestSingBoxRealityDualWildcardBindsCore(t *testing.T) {
 			listens = append(listens, in.Listen)
 		}
 	}
-	if len(listens) != 2 || listens[0] != "0.0.0.0" || listens[1] != "::" {
+	if len(listens) != 1 || listens[0] != "::" {
 		t.Fatalf("reality dual listens %v", listens)
 	}
 }
@@ -294,7 +294,7 @@ func TestSingBoxAnyTLSRealityBindsPublic(t *testing.T) {
 	}
 }
 
-func TestSingBoxUDPDualCreatesTwoListens(t *testing.T) {
+func TestSingBoxUDPDualCreatesOneListen(t *testing.T) {
 	c := newSingBoxCore()
 	raw, _, fronts, err := c.buildConfig(
 		[]UserSpec{{ID: "u1", UUID: vlessAlice, Password: "pw"}},
@@ -330,7 +330,7 @@ func TestSingBoxUDPDualCreatesTwoListens(t *testing.T) {
 			listens = append(listens, in.Listen)
 		}
 	}
-	if len(listens) != 2 || listens[0] != "0.0.0.0" || listens[1] != "::" {
+	if len(listens) != 1 || listens[0] != "::" {
 		t.Fatalf("udp dual listens %v", listens)
 	}
 }

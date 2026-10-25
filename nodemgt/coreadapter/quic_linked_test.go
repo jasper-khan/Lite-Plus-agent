@@ -14,3 +14,11 @@ func TestQUICLibrariesLinked(t *testing.T) {
 		t.Fatal("sing-box not linked")
 	}
 }
+
+func TestSingBoxUDPDualWildcardStarts(t *testing.T) {
+	for _, protocol := range []string{"hysteria2", "tuic"} {
+		t.Run(protocol, func(t *testing.T) {
+			testSingBoxDualWildcardStart(t, protocol, "tls")
+		})
+	}
+}

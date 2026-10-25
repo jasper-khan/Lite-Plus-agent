@@ -378,6 +378,11 @@ func (c *singBoxCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outb
 		listenHosts := []string{listenAddr}
 		if public {
 			listenHosts = hosts
+			if len(hosts) == 2 && hosts[0] == "0.0.0.0" && hosts[1] == "::" {
+				// sing-box's wildcard IPv6 socket also accepts IPv4, so a
+				// separate IPv4 listener on the same port would overlap.
+				listenHosts = []string{"::"}
+			}
 		}
 		for hi, host := range listenHosts {
 			cloned := cloneAnyMap(item)
