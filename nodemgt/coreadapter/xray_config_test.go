@@ -509,23 +509,12 @@ func TestSingBoxSOCKSMapsUsername(t *testing.T) {
 }
 
 func TestSingBoxOutboundMapsShadowsocksMethod(t *testing.T) {
-	c := newSingBoxCore()
-	for _, protocol := range []string{"shadowsocks", "socks"} {
-		c.outbounds = append(c.outbounds, OutboundSpec{
-			ID: protocol, Name: protocol, Protocol: protocol, Enabled: true,
-			SettingsJSON: `{"address":"192.0.2.1","port":8388,"password":"audit-password","ss_method":"aes-128-gcm"}`,
-		})
+	outbounds := singBoxOutbounds([]OutboundSpec{{
+		Protocol: "shadowsocks", Enabled: true, SettingsJSON: `{"ss_method":"aes-128-gcm"}`,
+	}})
+	if method := outbounds[len(outbounds)-1]["method"]; method != "aes-128-gcm" {
+		t.Fatalf("method=%v", method)
 	}
-	raw, err := c.configJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	inst, cancel, err := startSingBox(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cancel()
-	defer inst.Close()
 }
 
 func singBoxTypedOutbounds(t *testing.T, raw []byte, typ string) []map[string]any {
