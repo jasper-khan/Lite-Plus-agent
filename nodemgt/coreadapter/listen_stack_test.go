@@ -36,6 +36,61 @@ func TestFrontListenHosts(t *testing.T) {
 	}
 }
 
+func TestIsDualWildcardHosts(t *testing.T) {
+	if !isDualWildcardHosts([]string{"0.0.0.0", "::"}) {
+		t.Fatal("0.0.0.0 + ::")
+	}
+	if !isDualWildcardHosts([]string{"::", "0.0.0.0"}) {
+		t.Fatal(":: + 0.0.0.0")
+	}
+	if isDualWildcardHosts([]string{"0.0.0.0"}) {
+		t.Fatal("single host")
+	}
+	if isDualWildcardHosts([]string{"192.0.2.8", "::"}) {
+		t.Fatal("explicit v4 + ::")
+	}
+}
+
+func TestPublicCoreListenHosts(t *testing.T) {
+	orig := detectOverlappingWildcard
+	t.Cleanup(func() { detectOverlappingWildcard = orig })
+
+	got := publicCoreListenHosts([]string{"192.0.2.8"}, "tcp4")
+	if len(got) != 1 || got[0] != "192.0.2.8" {
+		t.Fatalf("explicit IP %v", got)
+	}
+
+	detectOverlappingWildcard = func(string) []string { return []string{"::"} }
+	got = publicCoreListenHosts([]string{"::", "0.0.0.0"}, "tcp4")
+	if len(got) != 1 || got[0] != "::" {
+		t.Fatalf("dual-stack collapse %v", got)
+	}
+
+	detectOverlappingWildcard = func(string) []string { return []string{"0.0.0.0"} }
+	got = publicCoreListenHosts([]string{"0.0.0.0", "::"}, "tcp4")
+	if len(got) != 1 || got[0] != "0.0.0.0" {
+		t.Fatalf("no-ipv6 fallback %v", got)
+	}
+
+	detectOverlappingWildcard = func(string) []string { return []string{"0.0.0.0", "::"} }
+	got = publicCoreListenHosts([]string{"::", "0.0.0.0"}, "tcp")
+	if len(got) != 2 || got[0] != "::" || got[1] != "0.0.0.0" {
+		t.Fatalf("v6only keeps input order %v", got)
+	}
+}
+
+func TestProbeOverlappingWildcard(t *testing.T) {
+	for _, network := range []string{"tcp4", "tcp"} {
+		got := probeOverlappingWildcard(network)
+		switch {
+		case len(got) == 1 && (got[0] == "::" || got[0] == "0.0.0.0"):
+		case len(got) == 2 && got[0] == "0.0.0.0" && got[1] == "::":
+		default:
+			t.Fatalf("%s probe %v", network, got)
+		}
+	}
+}
+
 func TestInboundStackPrefersSettings(t *testing.T) {
 	in := InboundSpec{
 		SettingsJSON: `{"stack":"ipv4"}`,
@@ -183,7 +238,7 @@ func TestXrayRealityDualWildcardBindsCore(t *testing.T) {
 			listens = append(listens, in.Listen)
 		}
 	}
-	if len(listens) != 2 || listens[0] != "0.0.0.0" || listens[1] != "::" {
+	if !sameStrings(listens, publicCoreListenHosts([]string{"0.0.0.0", "::"}, "tcp")) {
 		t.Fatalf("reality dual listens %v", listens)
 	}
 }
@@ -227,7 +282,7 @@ func TestSingBoxRealityDualWildcardBindsCore(t *testing.T) {
 			listens = append(listens, in.Listen)
 		}
 	}
-	if len(listens) != 1 || listens[0] != "::" {
+	if !sameStrings(listens, publicCoreListenHosts([]string{"0.0.0.0", "::"}, "tcp4")) {
 		t.Fatalf("reality dual listens %v", listens)
 	}
 }
@@ -330,9 +385,21 @@ func TestSingBoxUDPDualCreatesOneListen(t *testing.T) {
 			listens = append(listens, in.Listen)
 		}
 	}
-	if len(listens) != 1 || listens[0] != "::" {
+	if !sameStrings(listens, publicCoreListenHosts([]string{"0.0.0.0", "::"}, "tcp4")) {
 		t.Fatalf("udp dual listens %v", listens)
 	}
+}
+
+func sameStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestListenNetwork(t *testing.T) {

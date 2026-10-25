@@ -20,6 +20,9 @@ const (
 	hostReserveDefault          = 128 << 20
 	defaultMemoryReleaseMinutes = 10
 	unlimitedCgroup             = int64(math.MaxInt64 / 2)
+	// Hosts below this still get an auto GOMEMLIMIT. 1G/2G/4G boxes
+	// sit at or above 900MiB and skip the soft cap so idle RSS can drop.
+	autoMemoryLimitBelow = 900 << 20
 )
 
 var (
@@ -37,18 +40,26 @@ func configureRuntimeMemory() {
 	}
 	if os.Getenv("GOMEMLIMIT") == "" {
 		total, limited := memoryBudget()
-		limit := pickAgentMemoryLimit(total, cpus, limited)
-		debug.SetMemoryLimit(limit)
 		kind := "host"
 		if limited {
 			kind = "cgroup"
 		}
-		log.Printf("runtime memory limit %dMiB (%s %dMiB, %d cpu)", limit>>20, kind, total>>20, cpus)
+		if shouldSetAutoMemoryLimit(total) {
+			limit := pickAgentMemoryLimit(total, cpus, limited)
+			debug.SetMemoryLimit(limit)
+			log.Printf("runtime memory limit %dMiB (%s %dMiB, %d cpu)", limit>>20, kind, total>>20, cpus)
+		} else {
+			log.Printf("runtime memory limit skipped (%s %dMiB, %d cpu; GOGC and periodic release only)", kind, total>>20, cpus)
+		}
 	}
 	if os.Getenv("GOGC") == "" {
 		debug.SetGCPercent(50)
 	}
 	startMemoryRelease(memoryReleaseInterval())
+}
+
+func shouldSetAutoMemoryLimit(total int64) bool {
+	return total > 0 && total < autoMemoryLimitBelow
 }
 
 func pickAgentMemoryLimit(total int64, cpus int, limited bool) int64 {

@@ -105,6 +105,31 @@ func TestParseCgroupBytes(t *testing.T) {
 	}
 }
 
+func TestShouldSetAutoMemoryLimit(t *testing.T) {
+	const mib = int64(1 << 20)
+	cases := []struct {
+		total int64
+		want  bool
+	}{
+		{0, false},
+		{256 * mib, true},
+		{512 * mib, true},
+		{899 * mib, true},
+		{900 * mib, false},
+		{960 * mib, false},
+		{1024 * mib, false},
+		{2048 * mib, false},
+		{3072 * mib, false},
+		{4096 * mib, false},
+	}
+	for _, tc := range cases {
+		got := shouldSetAutoMemoryLimit(tc.total)
+		if got != tc.want {
+			t.Fatalf("total %dMiB: auto limit %v, want %v", tc.total>>20, got, tc.want)
+		}
+	}
+}
+
 func TestCpuClass(t *testing.T) {
 	if cpuClass(1) != 1 || cpuClass(0) != 1 {
 		t.Fatal("1 cpu class")
@@ -170,6 +195,49 @@ func TestConfigureRuntimeMemoryDefault(t *testing.T) {
 	gotLimit := debug.SetMemoryLimit(want)
 	if gotLimit != want {
 		t.Fatalf("memory limit = %d, want %d", gotLimit, want)
+	}
+	gotGC := debug.SetGCPercent(50)
+	if gotGC != 50 {
+		t.Fatalf("GOGC = %d, want 50", gotGC)
+	}
+}
+
+func TestConfigureRuntimeMemorySkipsLargeHost(t *testing.T) {
+	t.Setenv("AGENT_MEMORY_RELEASE_INTERVAL", "0")
+	if err := os.Unsetenv("GOMEMLIMIT"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Unsetenv("GOGC"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Unsetenv("GOMAXPROCS"); err != nil {
+		t.Fatal(err)
+	}
+	prevBudget, prevCPUs := memoryBudget, effectiveCPUs
+	memoryBudget = func() (int64, bool) { return 960 << 20, false }
+	effectiveCPUs = func() int { return 1 }
+	t.Cleanup(func() {
+		memoryBudget = prevBudget
+		effectiveCPUs = prevCPUs
+		_ = os.Unsetenv("GOMEMLIMIT")
+		_ = os.Unsetenv("GOGC")
+		_ = os.Unsetenv("GOMAXPROCS")
+	})
+
+	prevLimit := debug.SetMemoryLimit(math.MaxInt64)
+	prevGC := debug.SetGCPercent(100)
+	prevMax := runtime.GOMAXPROCS(0)
+	t.Cleanup(func() {
+		debug.SetMemoryLimit(prevLimit)
+		debug.SetGCPercent(prevGC)
+		runtime.GOMAXPROCS(prevMax)
+	})
+
+	configureRuntimeMemory()
+
+	gotLimit := debug.SetMemoryLimit(math.MaxInt64)
+	if gotLimit != math.MaxInt64 {
+		t.Fatalf("1G host should skip auto GOMEMLIMIT, got %d", gotLimit)
 	}
 	gotGC := debug.SetGCPercent(50)
 	if gotGC != 50 {

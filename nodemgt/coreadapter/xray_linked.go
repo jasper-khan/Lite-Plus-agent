@@ -368,7 +368,7 @@ func (c *xrayCore) buildConfig(users []UserSpec, inbounds []InboundSpec, outboun
 		var listenHosts []string
 		var listenPort int
 		if public {
-			listenHosts = FrontListenHosts(inboundStack(in), in.Listen)
+			listenHosts = publicCoreListenHosts(FrontListenHosts(inboundStack(in), in.Listen), "tcp")
 			if len(listenHosts) == 0 {
 				continue
 			}
