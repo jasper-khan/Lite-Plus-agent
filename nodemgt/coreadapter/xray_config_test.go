@@ -2,6 +2,7 @@ package coreadapter
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -505,6 +506,45 @@ func TestSingBoxSOCKSMapsUsername(t *testing.T) {
 	}
 	if !foundAuth || !foundOpen {
 		t.Fatalf("missing socks outbounds in %s", raw)
+	}
+}
+
+func TestSingBoxOutboundMapsShadowsocksMethod(t *testing.T) {
+	for _, tc := range []struct {
+		protocol string
+		method   string
+		want     string
+	}{
+		{"shadowsocks", "aes-128-gcm", "aes-128-gcm"},
+		{"shadowsocks", "chacha20-ietf-poly1305", "chacha20-ietf-poly1305"},
+		{"shadowsocks", "none", "none"},
+		{"shadowsocks", "", "aes-128-gcm"},
+		{"socks", "aes-128-gcm", ""},
+	} {
+		t.Run(tc.protocol+"/"+tc.method, func(t *testing.T) {
+			c := newSingBoxCore()
+			c.outbounds = []OutboundSpec{{
+				ID: "audit-exit", Name: "audit-exit", Protocol: tc.protocol, Enabled: true,
+				SettingsJSON: fmt.Sprintf(`{"address":"192.0.2.1","port":8388,"password":"audit-password","ss_method":%q}`, tc.method),
+			}}
+			raw, err := c.configJSON()
+			if err != nil {
+				t.Fatal(err)
+			}
+			inst, cancel, err := startSingBox(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cancel()
+			defer inst.Close()
+			outbounds := singBoxTypedOutbounds(t, raw, tc.protocol)
+			if len(outbounds) != 1 {
+				t.Fatalf("outbounds=%v", outbounds)
+			}
+			if method, _ := outbounds[0]["method"].(string); method != tc.want {
+				t.Fatalf("method=%q, want %q", method, tc.want)
+			}
+		})
 	}
 }
 

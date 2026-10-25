@@ -571,6 +571,13 @@ func singBoxOutbounds(rows []OutboundSpec) []map[string]any {
 				if pass, _ := settings["password"].(string); pass != "" {
 					item["password"] = pass
 				}
+				if strings.EqualFold(row.Protocol, "shadowsocks") {
+					method, _ := settings["ss_method"].(string)
+					if method == "" {
+						method = "aes-128-gcm"
+					}
+					item["method"] = method
+				}
 				if flow, _ := settings["flow"].(string); flow != "" {
 					item["flow"] = flow
 				}
